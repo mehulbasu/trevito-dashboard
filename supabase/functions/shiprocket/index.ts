@@ -4,21 +4,159 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import "@supabase/functions-js/edge-runtime.d.ts"
+import { createClient } from 'npm:@supabase/supabase-js@2'
 
-console.log("Hello from Functions!")
+type ShiprocketOrder = {
+  id: number
+  channel_order_id: string
+  created_at: string
+  status: string
+  payment_method: string
+  total: string
+  tax: string
+  customer_name: string
+  customer_email: string
+  customer_address: string
+  customer_city: string
+  customer_state: string
+  customer_pincode: string
+  products: Array<{ channel_sku: string; quantity: number; mrp: number; discount_including_tax: number }>
+  shipments: Array<{ shipped_date: string | null; delivered_date: string | null }>
+  others?: {
+    discount_codes?: Array<{ code?: string; amount?: string }>
+    note_attributes?: Array<{ name: string; value: string }>
+  }
+}
+
+const parseNumber = (value: string | number | undefined | null) => {
+  if (value == null || value === '') return 0
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''))
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+const parseDate = (value: string | null | undefined) => {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+const getNoteAttribute = (attrs: Array<{ name: string; value: string }> | undefined, key: string) =>
+  attrs?.find((attr) => attr.name.toLowerCase() === key.toLowerCase())?.value ?? null
 
 Deno.serve(async (req) => {
-  // Fetch from Shiprocket
-  const token = Deno.env.get('SHIPROCKET_API_KEY')!
-  const response = await fetch('https://apiv2.shiprocket.in/v1/external/orders', {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  const data = await response.json();
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      { db: { schema: 'sales' }},
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    )
 
-  return new Response(
-    JSON.stringify(data),
-    { headers: { "Content-Type": "application/json" } },
-  )
+    const shiprocketToken = Deno.env.get('SHIPROCKET_API_KEY')
+    if (!shiprocketToken) {
+      throw new Error('Missing Shiprocket API key')
+    }
+
+    const response = await fetch('https://apiv2.shiprocket.in/v1/external/orders', {
+      headers: { Authorization: `Bearer ${shiprocketToken}` }
+    })
+
+    if (!response.ok) {
+      throw new Error(`Shiprocket responded with ${response.status}`)
+    }
+
+    const payload = await response.json() as { data: ShiprocketOrder[] }
+
+    const orders = payload.data ?? []
+    if (orders.length === 0) {
+      return new Response(JSON.stringify({ message: 'No Shiprocket orders returned' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    const processedOrders = orders.map((order) => {
+      const discountCodes = order.others?.discount_codes ?? []
+      const totalDiscount = discountCodes.reduce((sum, code) => sum + parseNumber(code.amount), 0)
+      const noteAttrs = order.others?.note_attributes
+
+      const shipment = order.shipments?.[0]
+
+      return {
+        shiprocket_id: order.id,
+        shopify_order_id: order.channel_order_id,
+        order_date: parseDate(order.created_at),
+        order_status: order.status,
+        shipped_date: parseDate(shipment?.shipped_date ?? null),
+        delivery_date: parseDate(shipment?.delivered_date ?? null),
+        customer_name: order.customer_name,
+        customer_email: order.customer_email,
+        customer_address: order.customer_address,
+        customer_city: order.customer_city,
+        customer_state: order.customer_state,
+        customer_pincode: order.customer_pincode,
+        payment_method: order.payment_method,
+        total_amount: parseNumber(order.total),
+        tax_amount: parseNumber(order.tax),
+        discount_code: discountCodes.map((code) => code.code).filter(Boolean).join(', ') || null,
+        total_discount: totalDiscount,
+        utm_source: getNoteAttribute(noteAttrs, 'utm_source'),
+        utm_medium: getNoteAttribute(noteAttrs, 'utm_medium'),
+        utm_campaign: getNoteAttribute(noteAttrs, 'utm_campaign')
+      }
+    })
+
+    const orderIds = processedOrders.map((order) => order.shiprocket_id)
+
+    const { error: orderError } = await supabase
+      .from('shiprocket_orders')
+      .upsert(processedOrders, { onConflict: 'shiprocket_id' })
+
+    if (orderError) {
+      throw orderError
+    }
+
+    const itemsToInsert = orders.flatMap((order) =>
+      order.products.map((product) => ({
+        shiprocket_order_id: order.id,
+        sku: product.channel_sku,
+        quantity: product.quantity,
+        selling_price: parseNumber(product.mrp) - parseNumber(product.discount_including_tax)
+      }))
+    )
+
+    if (itemsToInsert.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('shiprocket_items')
+        .delete()
+        .in('shiprocket_order_id', orderIds)
+
+      if (deleteError) {
+        throw deleteError
+      }
+
+      const { error: insertError } = await supabase
+        .from('shiprocket_items')
+        .insert(itemsToInsert)
+
+      if (insertError) {
+        throw insertError
+      }
+    }
+
+    return new Response(JSON.stringify({
+      orders_processed: processedOrders.length,
+      items_processed: itemsToInsert.length
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (err) {
+    return new Response(JSON.stringify({ error: String(err?.message ?? err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
 })
 
 /* To invoke locally:
@@ -28,7 +166,6 @@ Deno.serve(async (req) => {
 
   curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/shiprocket' \
     --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
+    --header 'Content-Type: application/json'
 
 */
