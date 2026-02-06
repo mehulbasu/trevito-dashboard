@@ -28,6 +28,17 @@ type ShiprocketOrder = {
   }
 }
 
+type ShiprocketResponse = {
+  data?: ShiprocketOrder[]
+  meta?: {
+    pagination?: {
+      links?: {
+        next?: string | null
+      }
+    }
+  }
+}
+
 const parseNumber = (value: string | number | undefined | null) => {
   if (value == null || value === '') return 0
   const parsed = Number(String(value).replace(/[^0-9.-]/g, ''))
@@ -57,17 +68,48 @@ Deno.serve(async (req) => {
       throw new Error('Missing Shiprocket API key')
     }
 
-    const response = await fetch('https://apiv2.shiprocket.in/v1/external/orders', {
-      headers: { Authorization: `Bearer ${shiprocketToken}` }
-    })
+    const updatedFromDate = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0]
 
-    if (!response.ok) {
-      throw new Error(`Shiprocket responded with ${response.status}`)
+    const shiprocketUrl = new URL('https://apiv2.shiprocket.in/v1/external/orders')
+    const preservedParams = new URLSearchParams()
+    shiprocketUrl.searchParams.set('updatedFrom', updatedFromDate)
+    preservedParams.set('updatedFrom', updatedFromDate)
+
+    const headers = { Authorization: `Bearer ${shiprocketToken}` }
+    const orders: ShiprocketOrder[] = []
+    let nextUrl: string | null = shiprocketUrl.toString()
+
+    const applyPreservedParams = (input: string) => {
+      const normalizedUrl = new URL(input)
+      for (const [key, value] of preservedParams) {
+        if (!normalizedUrl.searchParams.has(key)) {
+          normalizedUrl.searchParams.set(key, value)
+        }
+      }
+      return normalizedUrl.toString()
     }
 
-    const payload = await response.json() as { data: ShiprocketOrder[] }
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 500))
 
-    const orders = payload.data ?? []
+    while (nextUrl) {
+      const fetchUrl = applyPreservedParams(nextUrl)
+      console.log(`Fetching Shiprocket orders from: ${fetchUrl}`)
+      const response = await fetch(fetchUrl, { headers })
+      if (!response.ok) {
+        throw new Error(`Shiprocket responded with ${response.status}`)
+      }
+
+      const page = await response.json() as ShiprocketResponse
+      orders.push(...(page.data ?? []))
+
+      nextUrl = page.meta?.pagination?.links?.next ?? null
+      if (nextUrl) {
+        await pause()
+      }
+    }
+
     if (orders.length === 0) {
       return new Response(JSON.stringify({ message: 'No Shiprocket orders returned' }), {
         status: 200,
