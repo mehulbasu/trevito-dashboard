@@ -125,22 +125,34 @@ Deno.serve(async (req) => {
       }))
     )
 
-    if (itemsToInsert.length > 0) {
-      const { error: deleteError } = await supabase
-        .from('shiprocket_items')
-        .delete()
-        .in('shiprocket_order_id', orderIds)
+    const skusByOrder = orders.reduce<Record<number, string[]>>((acc, order) => {
+      acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku)))
+      return acc
+    }, {})
 
-      if (deleteError) {
-        throw deleteError
+    if (itemsToInsert.length > 0) {
+      const { error: itemError } = await supabase
+        .from('shiprocket_items')
+        .upsert(itemsToInsert, { onConflict: 'shiprocket_order_id,sku' })
+
+      if (itemError) {
+        throw itemError
       }
 
-      const { error: insertError } = await supabase
-        .from('shiprocket_items')
-        .insert(itemsToInsert)
+      for (const [orderId, skus] of Object.entries(skusByOrder)) {
+        if (skus.length === 0) continue
+        const sanitized = skus
+          .map((sku) => `"${sku.replace(/"/g, '""')}"`)
+          .join(',')
+        const { error: cleanupError } = await supabase
+          .from('shiprocket_items')
+          .delete()
+          .eq('shiprocket_order_id', Number(orderId))
+          .not('sku', 'in', `(${sanitized})`)
 
-      if (insertError) {
-        throw insertError
+        if (cleanupError) {
+          throw cleanupError
+        }
       }
     }
 
