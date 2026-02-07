@@ -3,12 +3,12 @@
 
 import { useState } from 'react';
 import { TextInput, Button, Paper, Title, Stack, Center } from '@mantine/core';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/client';
 
 export function LoginComponent() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!);
+  const supabase = createClient();
 
   const handleLogin = async () => {
     setLoading(true);
