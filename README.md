@@ -14,6 +14,17 @@ Orders placed on our Shopify website are fulfilled through Shiprocket, a deliver
 #### Amazon
 Amazon offers the Selling Partner API (SP-API) which gives me access to selling partner insights, finance & accounting, inventory & order tracking, and brand analytics. I will use the Reports API to create and retrieve reports for product sales.
 #### Flipkart
-I have initiated the process to obtain developer access for the Marketplace Seller API, but I am still waiting for my request to be approved.
+Flipkart offers the Marketplace Seller API which has an Order Management system with an endpoint to filter and retrieve all orders which meet the specified criteria.
 #### Vyapar
 The app offers data export options to XLS files but does not have any automated process or API to do so. We will need functionality to upload, parse, and merge XLS sheets to update the database. This solution works fine since popup store sales happen only 2-3 times per month so the database will only need to be updated on those occasions.
+
+## Analytical Deliverables
+Dimensions include:
+- Product variant
+- Sales channel
+- Time period (monthly by default)
+
+Metrics include:
+- Total sales revenue
+- Percentage of sales
+- Number of products sold
