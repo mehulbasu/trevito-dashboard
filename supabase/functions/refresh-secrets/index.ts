@@ -1,8 +1,14 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
+/**
+ * This function is intended to be run as a scheduled job (e.g. via cron) to refresh expiring API keys.
+ * It checks the `private.api_keys` table for any keys that are expiring within the next day
+ * and refreshes them by calling the associated Authentication API. The new token and expiry are then 
+ * updated back in the database.
+ * 
+ * The function will respond with a JSON object indicating which services were refreshed or if no refresh was needed.
+ * Note: Ensure that the `CRON_SECRET` environment variable is set to a secure, random value and that the same value is used in the request header to prevent unauthorized access.
+ */
 
-// Setup type definitions for built-in Supabase Runtime APIs
+// TODO!: Schedule this function to run daily using cron
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -132,15 +138,3 @@ Deno.serve(async (req) => {
     })
   }
 })
-
-/* To invoke locally:
-
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
-
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/refresh-secrets' \
-    --header 'x-cron-secret: <CRON_SECRET>' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
-
-*/

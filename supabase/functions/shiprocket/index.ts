@@ -1,10 +1,28 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
-
-// Setup type definitions for built-in Supabase Runtime APIs
+/**
+ * Shiprocket incremental sync edge function.
+ *
+ * What it does:
+ * - Fetches recent orders from Shiprocket (`updatedFrom = today - 25 days`) and upserts them into
+ *   `sales.shiprocket_orders` and `sales.shiprocket_items`.
+ *
+ * How it works:
+ * - Reads the current Shiprocket bearer token from `private.api_keys` where `service = 'shiprocket'`.
+ * - Paginates Shiprocket API responses and writes normalized order/item records into the sales schema.
+ *
+ * Request params:
+ * - Method: POST (no request body required).
+ *
+ * Response:
+ * - 200: `{ orders_processed: number, items_processed: number }` or `{ message: string }`.
+ * - 500: `{ error: string }`.
+ */
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from 'npm:@supabase/supabase-js@2'
+
+type ApiKeyRow = {
+  key: string
+  expiry: string | null
+}
 
 type ShiprocketOrder = {
   id: number
@@ -56,16 +74,46 @@ const getNoteAttribute = (attrs: Array<{ name: string; value: string }> | undefi
 
 Deno.serve(async (req) => {
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      { db: { schema: 'sales' }},
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    if (req.method !== 'POST') {
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (!supabaseUrl || !serviceRoleKey) {
+      throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+    }
+
+    const salesClient = createClient(
+      supabaseUrl,
+      serviceRoleKey,
+      { db: { schema: 'sales' } }
     )
 
-    const shiprocketToken = Deno.env.get('SHIPROCKET_API_KEY')
+    const privateClient = createClient(
+      supabaseUrl,
+      serviceRoleKey,
+      { db: { schema: 'private' } }
+    )
+
+    const { data: apiKeyRow, error: apiKeyError } = await privateClient
+      .from('api_keys')
+      .select('key, expiry')
+      .eq('service', 'shiprocket')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle<ApiKeyRow>()
+
+    if (apiKeyError) {
+      throw apiKeyError
+    }
+
+    const shiprocketToken = apiKeyRow?.key
     if (!shiprocketToken) {
-      throw new Error('Missing Shiprocket API key')
+      throw new Error('Missing shiprocket API key in private.api_keys')
     }
 
     const updatedFromDate = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000)
@@ -148,9 +196,7 @@ Deno.serve(async (req) => {
       }
     })
 
-    const orderIds = processedOrders.map((order) => order.shiprocket_id)
-
-    const { error: orderError } = await supabase
+    const { error: orderError } = await salesClient
       .from('shiprocket_orders')
       .upsert(processedOrders, { onConflict: 'shiprocket_id' })
 
@@ -173,7 +219,7 @@ Deno.serve(async (req) => {
     }, {})
 
     if (itemsToInsert.length > 0) {
-      const { error: itemError } = await supabase
+      const { error: itemError } = await salesClient
         .from('shiprocket_items')
         .upsert(itemsToInsert, { onConflict: 'shiprocket_order_id,sku' })
 
@@ -186,7 +232,7 @@ Deno.serve(async (req) => {
         const sanitized = skus
           .map((sku) => `"${sku.replace(/"/g, '""')}"`)
           .join(',')
-        const { error: cleanupError } = await supabase
+        const { error: cleanupError } = await salesClient
           .from('shiprocket_items')
           .delete()
           .eq('shiprocket_order_id', Number(orderId))
@@ -212,14 +258,3 @@ Deno.serve(async (req) => {
     })
   }
 })
-
-/* To invoke locally:
-
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
-
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/shiprocket' \
-    --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' \
-    --header 'Content-Type: application/json'
-
-*/
