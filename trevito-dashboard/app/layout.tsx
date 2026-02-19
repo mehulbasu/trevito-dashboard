@@ -1,5 +1,7 @@
 import '@mantine/core/styles.css';
+import '@mantine/notifications/styles.css';
 import { ColorSchemeScript, mantineHtmlProps, MantineProvider, createTheme } from '@mantine/core';
+import { Notifications } from '@mantine/notifications';
 import "./globals.css";
 
 const theme = createTheme({
@@ -18,6 +20,7 @@ export default function RootLayout({
       </head>
       <body>
         <MantineProvider theme={theme}>
+          <Notifications position="top-right" />
           {children}
         </MantineProvider>
       </body>
