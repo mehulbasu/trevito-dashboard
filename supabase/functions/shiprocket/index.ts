@@ -17,7 +17,8 @@
  * - 500: `{ error: string }`.
  */
 import "@supabase/functions-js/edge-runtime.d.ts"
-import { createClient } from 'npm:@supabase/supabase-js@2'
+import { corsHeaders } from 'npm:@supabase/supabase-js@2.95.3/cors'
+import { createClient } from 'npm:@supabase/supabase-js@2.95.3'
 
 type ApiKeyRow = {
   key: string
@@ -73,11 +74,15 @@ const getNoteAttribute = (attrs: Array<{ name: string; value: string }> | undefi
   attrs?.find((attr) => attr.name.toLowerCase() === key.toLowerCase())?.value ?? null
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     if (req.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
         status: 405,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {  ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
@@ -161,7 +166,7 @@ Deno.serve(async (req) => {
     if (orders.length === 0) {
       return new Response(JSON.stringify({ message: 'No Shiprocket orders returned' }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' }
+        headers: {  ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
@@ -249,12 +254,12 @@ Deno.serve(async (req) => {
       items_processed: itemsToInsert.length
     }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: {  ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err?.message ?? err) }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: {  ...corsHeaders, 'Content-Type': 'application/json' }
     })
   }
 })
