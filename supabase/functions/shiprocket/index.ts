@@ -249,6 +249,15 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Update sales.last_updated table with timestamp
+    const { error: lastUpdatedError } = await salesClient
+      .from('last_updated')
+      .upsert({ channel: 'shiprocket', updated: new Date() }, { onConflict: 'channel' })
+
+    if (lastUpdatedError) {
+      throw lastUpdatedError
+    }
+
     return new Response(JSON.stringify({
       orders_processed: processedOrders.length,
       items_processed: itemsToInsert.length
