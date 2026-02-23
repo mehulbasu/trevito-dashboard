@@ -1,41 +1,32 @@
-import { Container, Stack, Text, Title } from '@mantine/core';
-import ShiprocketSyncButton from '@/components/data/ShiprocketSyncButton';
+import { Container, Stack, Title } from '@mantine/core';
+import ShiprocketSyncPanel from '@/components/data/ShiprocketSyncPanel';
 import { createClient } from '@/lib/supabase/server';
 
-type LastUpdatedRow = {
-  channel: string;
-  updated: string;
-};
-
-async function getLastUpdatedTimestamps() {
+async function getShiprocketLastUpdated() {
   const supabase = await createClient();
-  const { data, error } = await supabase.schema('sales').from('last_updated').select('channel, updated');
+  const { data, error } = await supabase
+    .schema('sales')
+    .from('last_updated')
+    .select('updated')
+    .eq('channel', 'shiprocket')
+    .maybeSingle<{ updated: string }>();
 
   if (error) {
-    console.error('Error fetching last updated timestamp:', error);
-    return [] as LastUpdatedRow[];
+    console.error('Error fetching Shiprocket last updated timestamp:', error);
+    return null;
   }
 
-  return (data ?? []) as LastUpdatedRow[];
+  return data?.updated ?? null;
 }
 
 export default async function DataPage() {
-  const timestamps = await getLastUpdatedTimestamps();
-
-  // TODO: Update after successful sync
-  const shiprocketLastUpdated = timestamps.find((row) => row.channel === 'shiprocket')?.updated;
-  const shiprocketLastUpdatedLocal = shiprocketLastUpdated
-    ? new Date(shiprocketLastUpdated).toLocaleString()
-    : 'Not synced yet';
+  const shiprocketLastUpdated = await getShiprocketLastUpdated();
 
   return (
     <Container size="lg" py="md">
       <Stack>
         <Title order={2}>Manage data</Title>
-        <ShiprocketSyncButton />
-        <Text c="dimmed" size="sm">
-          Last updated: {shiprocketLastUpdatedLocal}
-        </Text>
+        <ShiprocketSyncPanel initialLastUpdated={shiprocketLastUpdated} />
       </Stack>
     </Container>
   );
