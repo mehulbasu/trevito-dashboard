@@ -1,5 +1,6 @@
 import { Container, Stack, Title } from '@mantine/core';
 import ShiprocketSyncPanel from '@/components/data/ShiprocketSyncPanel';
+import VyaparUploadPanel from '@/components/data/VyaparUploadPanel';
 import { createClient } from '@/lib/supabase/server';
 
 async function getShiprocketLastUpdated() {
@@ -27,6 +28,7 @@ export default async function DataPage() {
       <Stack>
         <Title order={2}>Manage data</Title>
         <ShiprocketSyncPanel initialLastUpdated={shiprocketLastUpdated} />
+        <VyaparUploadPanel />
       </Stack>
     </Container>
   );

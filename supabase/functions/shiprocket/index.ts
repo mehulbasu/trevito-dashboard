@@ -209,6 +209,7 @@ Deno.serve(async (req) => {
       throw orderError
     }
 
+    // TODO: Selling price is currently per-unit. Multiply by quantity?
     const itemsToInsert = orders.flatMap((order) =>
       order.products.map((product) => ({
         shiprocket_order_id: order.id,
@@ -232,6 +233,7 @@ Deno.serve(async (req) => {
         throw itemError
       }
 
+      // TODO: Review cleanup logic and redundant deletes
       for (const [orderId, skus] of Object.entries(skusByOrder)) {
         if (skus.length === 0) continue
         const sanitized = skus
