@@ -9,6 +9,13 @@ type VyaparUploadResponse = {
   message?: string;
 };
 
+type VyaparUploadPanelProps = {
+  initialLastUpdated: string | null;
+};
+
+const formatLastUpdated = (timestamp: string | null) =>
+  timestamp ? new Date(timestamp).toLocaleString() : 'Not synced yet';
+
 const toBase64 = (bytes: Uint8Array) => {
   let binary = '';
   const chunkSize = 0x8000;
@@ -21,9 +28,27 @@ const toBase64 = (bytes: Uint8Array) => {
   return btoa(binary);
 };
 
-export default function VyaparUploadPanel() {
+export default function VyaparUploadPanel({ initialLastUpdated }: VyaparUploadPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(initialLastUpdated);
+
+  const refreshLastUpdated = async () => {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .schema('sales')
+      .from('last_updated')
+      .select('updated')
+      .eq('channel', 'vyapar')
+      .maybeSingle<{ updated: string }>();
+
+    if (error) {
+      console.error('Error fetching latest Vyapar timestamp:', error);
+      return;
+    }
+
+    setLastUpdated(data?.updated ?? null);
+  };
 
   const handleUpload = async () => {
     if (!file) {
@@ -69,6 +94,8 @@ export default function VyaparUploadPanel() {
         color: 'green',
         autoClose: 5000,
       });
+
+      await refreshLastUpdated();
     } finally {
       setIsUploading(false);
     }
@@ -87,6 +114,9 @@ export default function VyaparUploadPanel() {
       <Button onClick={handleUpload} loading={isUploading} w="fit-content">
         Upload Vyapar file
       </Button>
+      <Text c="dimmed" size="sm">
+        Last updated: {formatLastUpdated(lastUpdated)}
+      </Text>
     </Stack>
   );
 }

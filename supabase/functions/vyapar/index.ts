@@ -78,6 +78,16 @@ const decodeBase64ToBytes = (base64: string) => {
   return bytes
 }
 
+const upsertVyaparLastUpdated = async (salesClient: ReturnType<typeof createClient>) => {
+  const { error: lastUpdatedError } = await salesClient
+    .from('last_updated')
+    .upsert({ channel: 'vyapar', updated: new Date() }, { onConflict: 'channel' })
+
+  if (lastUpdatedError) {
+    throw lastUpdatedError
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -152,8 +162,9 @@ Deno.serve(async (req) => {
       })
       .filter((row): row is NonNullable<typeof row> => row != null)
 
-    // TODO!: Throw error if no rows to process
     if (salesRows.length === 0) {
+      await upsertVyaparLastUpdated(salesClient)
+
       return new Response(JSON.stringify({
         message: 'No sale records found in "Sale Report"',
         sales_processed: 0,
@@ -221,13 +232,7 @@ Deno.serve(async (req) => {
 
     console.log(`Parsed and upserted ${itemsRows.length} item rows from "Sale Items" sheet`)
 
-    const { error: lastUpdatedError } = await salesClient
-      .from('last_updated')
-      .upsert({ channel: 'vyapar', updated: new Date() }, { onConflict: 'channel' })
-
-    if (lastUpdatedError) {
-      throw lastUpdatedError
-    }
+    await upsertVyaparLastUpdated(salesClient)
 
     return new Response(JSON.stringify({
       message: 'Vyapar file processed successfully',
