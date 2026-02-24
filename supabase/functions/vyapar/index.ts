@@ -23,6 +23,7 @@ type SaleItemsRow = {
   'Item code'?: string
   Quantity?: string | number
   Amount?: string | number
+  GST?: string | number
 }
 
 const parseNumber = (value: string | number | undefined | null) => {
@@ -35,6 +36,17 @@ const parseInteger = (value: string | number | undefined | null) => {
   const parsed = parseNumber(value)
   if (parsed == null) return null
   return Math.round(parsed)
+}
+
+const parseLeadingNumber = (value: string | number | undefined | null) => {
+  if (value == null || value === '') return null
+  if (typeof value === 'number') return Number.isNaN(value) ? null : value
+
+  const match = String(value).trim().match(/^-?\d+(?:\.\d+)?/)
+  if (!match) return null
+
+  const parsed = Number(match[0])
+  return Number.isNaN(parsed) ? null : parsed
 }
 
 const parseDateFromVyapar = (value: string | number | Date | undefined) => {
@@ -156,8 +168,7 @@ Deno.serve(async (req) => {
           invoice_no: invoiceNo,
           sale_date: saleDate,
           customer_name: row['Party Name']?.trim() || null,
-          customer_phone: row['Phone No.'] != null ? String(row['Phone No.']).trim() : null,
-          total_amount: parseNumber(row['Total Amount'])
+          customer_phone: row['Phone No.'] != null ? String(row['Phone No.']).trim() : null
         }
       })
       .filter((row): row is NonNullable<typeof row> => row != null)
@@ -186,29 +197,32 @@ Deno.serve(async (req) => {
     console.log(`Parsed and upserted ${salesRows.length} sales rows into database`)
 
     const validInvoices = new Set(salesRows.map((row) => row.invoice_no))
-    const itemAggregate = new Map<string, { invoice_no: number; sku: string; quantity: number; selling_price: number }>()
+    const itemAggregate = new Map<string, { invoice_no: number; sku: string; quantity: number; net_price: number }>()
 
     for (const row of saleItemsRows) {
       const invoiceNo = parseInteger(row['Invoice No.'])
       const sku = row['Item code']?.trim()
       const quantity = parseInteger(row.Quantity)
-      const sellingPrice = parseNumber(row.Amount)
+      const amount = parseNumber(row.Amount)
+      const gst = parseLeadingNumber(row.GST)
 
-      if (!invoiceNo || !sku || quantity == null || sellingPrice == null) continue
+      if (!invoiceNo || !sku || quantity == null || amount == null || gst == null) continue
       if (!validInvoices.has(invoiceNo)) continue
+
+      const netPrice = amount - gst
 
       const key = `${invoiceNo}::${sku}`
       const existing = itemAggregate.get(key)
       
       if (existing) {
         existing.quantity += quantity
-        existing.selling_price += sellingPrice
+        existing.net_price += netPrice
       } else {
         itemAggregate.set(key, {
           invoice_no: invoiceNo,
           sku,
           quantity,
-          selling_price: sellingPrice
+          net_price: netPrice
         })
       }
     }
@@ -217,7 +231,7 @@ Deno.serve(async (req) => {
       invoice_no: item.invoice_no,
       sku: item.sku,
       quantity: item.quantity,
-      selling_price: Number(item.selling_price.toFixed(2))
+      net_price: Number(item.net_price.toFixed(2))
     }))
 
     if (itemsRows.length > 0) {

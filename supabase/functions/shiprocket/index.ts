@@ -16,6 +16,7 @@
  * - 200: `{ orders_processed: number, items_processed: number }` or `{ message: string }`.
  * - 500: `{ error: string }`.
  */
+// TODO!!: Calculate revenue without tax
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { corsHeaders } from 'npm:@supabase/supabase-js@2.95.3/cors'
 import { createClient } from 'npm:@supabase/supabase-js@2.95.3'
@@ -170,6 +171,7 @@ Deno.serve(async (req) => {
       })
     }
 
+    // TODO!: Exclude orders with total_amount = 1.00 (free samples to influencers)
     const processedOrders = orders.map((order) => {
       const discountCodes = order.others?.discount_codes ?? []
       const totalDiscount = discountCodes.reduce((sum, code) => sum + parseNumber(code.amount), 0)
