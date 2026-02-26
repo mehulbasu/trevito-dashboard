@@ -1,5 +1,8 @@
 {
   "devDependencies": {
     "supabase": "^2.75.4"
+  },
+  "dependencies": {
+    "@amazon-sp-api-release/amazon-sp-api-sdk-js": "^1.7.2"
   }
 }
