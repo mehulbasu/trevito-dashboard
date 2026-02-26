@@ -37,6 +37,7 @@ type AmazonOrder = {
 
 const AMAZON_MARKETPLACE_ID = 'A21TJRUUN4KGV'
 const SP_API_ENDPOINT = 'https://sellingpartnerapi-eu.amazon.com'
+const CREATED_AFTER_ISO = '2025-07-22T00:00:00.000Z'
 
 const amazonClientId = Deno.env.get('AMAZON_CLIENT_ID')
 const amazonClientSecret = Deno.env.get('AMAZON_CLIENT_SECRET')
@@ -55,7 +56,7 @@ if (!amazonClientId || !amazonClientSecret || !amazonRefreshToken) {
       amazonRefreshToken,
       null
     )
-    console.log('[amazon] Amazon LWA auth client initialized')
+    console.log('[amazon-backfill] Amazon LWA auth client initialized')
   } catch (error) {
     amazonClientInitError = `Failed to initialize Amazon LWA auth client: ${String(error)}`
   }
@@ -64,12 +65,12 @@ if (!amazonClientId || !amazonClientSecret || !amazonRefreshToken) {
 const searchOrdersPage = async (
   accessToken: string,
   params: {
-    lastUpdatedAfter: string
+    createdAfter: string
     paginationToken?: string
   }
 ) => {
   const url = new URL('/orders/2026-01-01/orders', SP_API_ENDPOINT)
-  url.searchParams.set('lastUpdatedAfter', params.lastUpdatedAfter)
+  url.searchParams.set('createdAfter', params.createdAfter)
   url.searchParams.set('marketplaceIds', AMAZON_MARKETPLACE_ID)
   url.searchParams.set('maxResultsPerPage', '100')
   url.searchParams.set('includedData', 'RECIPIENT,FULFILLMENT')
@@ -128,7 +129,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log(`[amazon] Request received: ${req.method}`)
+    console.log(`[amazon-backfill] Request received: ${req.method}`)
 
     if (req.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -157,10 +158,8 @@ Deno.serve(async (req) => {
       { db: { schema: 'sales' } }
     )
 
-    const lastUpdatedAfter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    const lastUpdatedAfterIso = lastUpdatedAfter.toISOString()
     const accessToken = await lwaAuthClient.getAccessToken()
-    console.log(`[amazon] Starting searchOrders sync from ${lastUpdatedAfterIso}`)
+    console.log(`[amazon-backfill] Starting searchOrders backfill from createdAfter ${CREATED_AFTER_ISO}`)
 
     const allOrders: AmazonOrder[] = []
     let nextToken: string | null = null
@@ -168,12 +167,12 @@ Deno.serve(async (req) => {
 
     do {
       pageNumber += 1
-      console.log(`[amazon] Fetching page ${pageNumber}${nextToken ? ' (with pagination token)' : ''}`)
+      console.log(`[amazon-backfill] Fetching page ${pageNumber}${nextToken ? ' (with pagination token)' : ''}`)
 
       let response: { orders?: AmazonOrder[]; pagination?: { nextToken?: string | null } }
       try {
         response = await searchOrdersPage(accessToken, {
-          lastUpdatedAfter: lastUpdatedAfterIso,
+          createdAfter: CREATED_AFTER_ISO,
           paginationToken: nextToken ?? undefined
         })
       } catch (error) {
@@ -184,10 +183,10 @@ Deno.serve(async (req) => {
         }
         const errorPayload = apiError.response?.text ?? JSON.stringify(apiError.response?.body ?? null)
         console.error(
-          `[amazon] searchOrders API failed on page ${pageNumber} with status ${apiError.status ?? 'unknown'}: ${apiError.message ?? 'Unknown error'}`
+          `[amazon-backfill] searchOrders API failed on page ${pageNumber} with status ${apiError.status ?? 'unknown'}: ${apiError.message ?? 'Unknown error'}`
         )
         if (errorPayload && errorPayload !== 'null') {
-          console.error(`[amazon] searchOrders error payload: ${errorPayload}`)
+          console.error(`[amazon-backfill] searchOrders error payload: ${errorPayload}`)
         }
         throw error
       }
@@ -196,21 +195,21 @@ Deno.serve(async (req) => {
       allOrders.push(...pageOrders)
       nextToken = response?.pagination?.nextToken ?? null
 
-      console.log(`[amazon] Page ${pageNumber} fetched: ${pageOrders.length} orders (running total: ${allOrders.length})`)
+      console.log(`[amazon-backfill] Page ${pageNumber} fetched: ${pageOrders.length} orders (running total: ${allOrders.length})`)
     } while (nextToken)
 
-    console.log(`[amazon] Pagination complete. Total orders fetched: ${allOrders.length}`)
+    console.log(`[amazon-backfill] Pagination complete. Total orders fetched: ${allOrders.length}`)
 
     const filteredOrders = allOrders.filter(
       (order) => order.salesChannel?.channelName?.toUpperCase() !== 'NON_AMAZON'
     )
     const skippedNonAmazonOrders = allOrders.length - filteredOrders.length
     if (skippedNonAmazonOrders > 0) {
-      console.log(`[amazon] Skipped ${skippedNonAmazonOrders} NON_AMAZON orders`)
+      console.log(`[amazon-backfill] Skipped ${skippedNonAmazonOrders} NON_AMAZON orders`)
     }
 
     if (filteredOrders.length === 0) {
-      console.log('[amazon] No orders returned from Amazon')
+      console.log('[amazon-backfill] No orders returned from Amazon')
       return new Response(JSON.stringify({ message: 'No Amazon orders returned' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -236,7 +235,7 @@ Deno.serve(async (req) => {
     if (orderError) {
       throw orderError
     }
-    console.log(`[amazon] Upserted ${ordersToUpsert.length} rows into sales.amazon_orders`)
+    console.log(`[amazon-backfill] Upserted ${ordersToUpsert.length} rows into sales.amazon_orders`)
 
     const itemsToUpsert = filteredOrders.flatMap((order) =>
       (order.orderItems ?? []).map((item) => {
@@ -259,7 +258,7 @@ Deno.serve(async (req) => {
     const orderIds = filteredOrders.map((order) => order.orderId)
 
     if (orderIds.length > 0) {
-      console.log(`[amazon] Cleaning existing items for ${orderIds.length} orders before upsert`)
+      console.log(`[amazon-backfill] Cleaning existing items for ${orderIds.length} orders before upsert`)
       const { error: cleanupError } = await salesClient
         .from('amazon_items')
         .delete()
@@ -279,7 +278,7 @@ Deno.serve(async (req) => {
         throw itemError
       }
 
-      console.log(`[amazon] Upserted ${itemsToUpsert.length} rows into sales.amazon_items`)
+      console.log(`[amazon-backfill] Upserted ${itemsToUpsert.length} rows into sales.amazon_items`)
     }
 
     const { error: lastUpdatedError } = await salesClient
@@ -291,7 +290,7 @@ Deno.serve(async (req) => {
     }
 
     const elapsedMs = Date.now() - requestStartedAt
-    console.log(`[amazon] Sync complete in ${elapsedMs}ms`)
+    console.log(`[amazon-backfill] Backfill complete in ${elapsedMs}ms`)
 
     return new Response(JSON.stringify({
       orders_processed: ordersToUpsert.length,
@@ -307,11 +306,11 @@ Deno.serve(async (req) => {
       message?: string
     }
     console.error(
-      `[amazon] Sync failed${topLevelError.status ? ` (status ${topLevelError.status})` : ''}: ${topLevelError.message ?? String(err)}`
+      `[amazon-backfill] Sync failed${topLevelError.status ? ` (status ${topLevelError.status})` : ''}: ${topLevelError.message ?? String(err)}`
     )
     const topLevelPayload = topLevelError.response?.text ?? JSON.stringify(topLevelError.response?.body ?? null)
     if (topLevelPayload && topLevelPayload !== 'null') {
-      console.error(`[amazon] Failure payload: ${topLevelPayload}`)
+      console.error(`[amazon-backfill] Failure payload: ${topLevelPayload}`)
     }
     return new Response(JSON.stringify({ error: String(err?.message ?? err) }), {
       status: 500,
