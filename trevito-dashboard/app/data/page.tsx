@@ -1,5 +1,6 @@
 import { Container, Stack, Title } from '@mantine/core';
 import ShiprocketSyncPanel from '@/components/data/ShiprocketSyncPanel';
+import AmazonSyncPanel from '@/components/data/AmazonSyncPanel';
 import VyaparUploadPanel from '@/components/data/VyaparUploadPanel';
 import { createClient } from '@/lib/supabase/server';
 
@@ -37,8 +38,26 @@ async function getVyaparLastUpdated() {
   return data?.updated ?? null;
 }
 
+async function getAmazonLastUpdated() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('sales')
+    .from('last_updated')
+    .select('updated')
+    .eq('channel', 'amazon')
+    .maybeSingle<{ updated: string }>();
+
+  if (error) {
+    console.error('Error fetching Amazon last updated timestamp:', error);
+    return null;
+  }
+
+  return data?.updated ?? null;
+}
+
 export default async function DataPage() {
   const shiprocketLastUpdated = await getShiprocketLastUpdated();
+  const amazonLastUpdated = await getAmazonLastUpdated();
   const vyaparLastUpdated = await getVyaparLastUpdated();
 
   return (
@@ -46,6 +65,7 @@ export default async function DataPage() {
       <Stack>
         <Title order={2}>Manage data</Title>
         <ShiprocketSyncPanel initialLastUpdated={shiprocketLastUpdated} />
+        <AmazonSyncPanel initialLastUpdated={amazonLastUpdated} />
         <VyaparUploadPanel initialLastUpdated={vyaparLastUpdated} />
       </Stack>
     </Container>
