@@ -358,11 +358,40 @@ Deno.serve(async (req) => {
       throw lastUpdatedError
     }
 
+    let geoEnrichQueued = false
+    if (shipmentIds.length > 0) {
+      try {
+        const geoEnrichPromise = fetch(`${supabaseUrl}/functions/v1/flipkart-geo-enrich`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${serviceRoleKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ shipmentIds })
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              const body = await res.text()
+              console.error(`[flipkart] geo enrich async invoke failed | id=${requestId} | status=${res.status} | body=${body.slice(0, 1000)}`)
+            }
+          })
+          .catch((error) => {
+            console.error(`[flipkart] geo enrich async invoke error | id=${requestId} | error=${String((error as Error)?.message ?? error)}`)
+          })
+
+        EdgeRuntime.waitUntil(geoEnrichPromise)
+        geoEnrichQueued = true
+      } catch (error) {
+        console.error(`[flipkart] geo enrich queue error | id=${requestId} | error=${String((error as Error)?.message ?? error)}`)
+      }
+    }
+
     console.log(`[flipkart] sync complete | id=${requestId} | elapsedMs=${Date.now() - startedAt}`)
 
     return new Response(JSON.stringify({
       orders_processed: ordersToUpsert.length,
-      items_processed: itemsToUpsert.length
+      items_processed: itemsToUpsert.length,
+      geo_enrich_queued: geoEnrichQueued
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

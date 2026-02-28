@@ -43,10 +43,9 @@ const fetchShipmentDetails = async (token: string, shipmentIds: string[]) => {
   const endpoint = `${new URL(FLIPKART_DETAILS_PATH_PREFIX, FLIPKART_API_ORIGIN).toString()}${shipmentIds.join(',')}`
 
   const response = await fetch(endpoint, {
-    method: 'POST',
+    method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
       Accept: 'application/json'
     }
   })
@@ -56,15 +55,25 @@ const fetchShipmentDetails = async (token: string, shipmentIds: string[]) => {
     throw new Error(`Flipkart details API failed with ${response.status}: ${bodyText}`)
   }
 
-  return await response.json() as FlipkartDetailsResponse
+  const payload = await response.json() as FlipkartDetailsResponse
+  console.log(
+    `[flipkart-geo-enrich] fetch details success | shipmentsReturned=${payload.shipments?.length ?? 0}`
+  )
+
+  return payload
 }
 
 Deno.serve(async (req) => {
+  const startedAt = Date.now()
+  const requestId = crypto.randomUUID()
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    console.log(`[flipkart-geo-enrich] request start`)
+
     if (req.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
         status: 405,
@@ -101,6 +110,7 @@ Deno.serve(async (req) => {
       .maybeSingle<ApiKeyRow>()
 
     if (apiKeyError) {
+      console.error(`[flipkart-geo-enrich] api key query failed | id=${requestId} | error=${apiKeyError.message}`)
       throw apiKeyError
     }
 
@@ -128,9 +138,11 @@ Deno.serve(async (req) => {
       shipmentIds = (rows ?? [])
         .map((row) => row.shipment_id as string)
         .filter(Boolean)
+
     }
 
     if (shipmentIds.length === 0) {
+      console.log(`[flipkart-geo-enrich] no shipments to enrich | id=${requestId}`)
       return new Response(JSON.stringify({ message: 'No shipments need geo enrichment' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -138,6 +150,8 @@ Deno.serve(async (req) => {
     }
 
     const batches = chunkArray(shipmentIds, DETAILS_BATCH_LIMIT)
+    console.log(`[flipkart-geo-enrich] batching | id=${requestId} | batchCount=${batches.length} | batchSize=${DETAILS_BATCH_LIMIT}`)
+
     const updates: Array<{
       shipment_id: string
       order_id: string
@@ -147,7 +161,9 @@ Deno.serve(async (req) => {
       last_accessed_at: string
     }> = []
 
-    for (const batch of batches) {
+    for (let index = 0; index < batches.length; index += 1) {
+      const batch = batches[index]
+      console.log(`[flipkart-geo-enrich] processing batch | id=${requestId} | batch=${index + 1}/${batches.length} | shipmentCount=${batch.length}`)
       const details = await fetchShipmentDetails(flipkartToken, batch)
 
       for (const shipment of details.shipments ?? []) {
@@ -172,9 +188,14 @@ Deno.serve(async (req) => {
         .upsert(updates, { onConflict: 'shipment_id' })
 
       if (upsertError) {
+        console.error(`[flipkart-geo-enrich] upsert failed | id=${requestId} | error=${upsertError.message}`)
         throw upsertError
       }
+
+      console.log(`[flipkart-geo-enrich] upsert success | id=${requestId} | rows=${updates.length}`)
     }
+
+    console.log(`[flipkart-geo-enrich] request complete | id=${requestId} | elapsedMs=${Date.now() - startedAt}`)
 
     return new Response(JSON.stringify({
       shipment_ids_processed: shipmentIds.length,
@@ -184,6 +205,14 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (err) {
+    console.error(
+      `[flipkart-geo-enrich] request failed | id=${requestId} | elapsedMs=${Date.now() - startedAt} | error=${String((err as Error)?.message ?? err)}`
+    )
+    const stack = (err as Error)?.stack
+    if (stack) {
+      console.error(`[flipkart-geo-enrich] stack | id=${requestId} | ${stack}`)
+    }
+
     return new Response(JSON.stringify({ error: String((err as Error)?.message ?? err) }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
