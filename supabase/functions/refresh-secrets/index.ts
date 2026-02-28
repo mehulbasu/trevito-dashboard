@@ -20,6 +20,7 @@ type ApiKeyRow = {
 }
 
 const SHIPROCKET_AUTH_URL = 'https://apiv2.shiprocket.in/v1/external/auth/login'
+const FLIPKART_AUTH_URL = 'https://api.flipkart.net/oauth-service/oauth/token'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const TEN_DAYS_MS = 10 * ONE_DAY_MS
 const CRON_SECRET_HEADER = 'x-cron-secret'
@@ -41,6 +42,46 @@ const fetchShiprocketToken = async (email: string, password: string) => {
   }
 
   return payload.token
+}
+
+const fetchFlipkartToken = async (appId: string, appSecret: string) => {
+  const endpoint = new URL(FLIPKART_AUTH_URL)
+  endpoint.searchParams.set('grant_type', 'client_credentials')
+  endpoint.searchParams.set('scope', 'Seller_Api')
+
+  const basicAuth = btoa(`${appId}:${appSecret}`)
+
+  const response = await fetch(endpoint.toString(), {
+    method: 'GET',
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      Accept: 'application/json'
+    }
+  })
+
+  if (!response.ok) {
+    const bodyText = await response.text()
+    throw new Error(`Flipkart auth failed with ${response.status}: ${bodyText}`)
+  }
+
+  const payload = await response.json() as {
+    access_token?: string
+    token?: string
+    expires_in?: number | string
+  }
+
+  const token = payload.access_token ?? payload.token
+  if (!token) {
+    throw new Error('Flipkart auth response missing access token')
+  }
+
+  const expiresInSecondsRaw = Number(payload.expires_in)
+  const expiresInSeconds = Number.isFinite(expiresInSecondsRaw) && expiresInSecondsRaw > 0
+    ? expiresInSecondsRaw
+    : ONE_DAY_MS / 1000
+
+  const expiry = new Date(Date.now() + expiresInSeconds * 1000).toISOString()
+  return { token, expiry }
 }
 
 Deno.serve(async (req) => {
@@ -90,7 +131,7 @@ Deno.serve(async (req) => {
 
     const now = Date.now()
     const refreshTargets = rows?.filter((row) => {
-      if (row.service !== 'shiprocket') return false
+      if (row.service !== 'shiprocket' && row.service !== 'flipkart') return false
       if (!row.expiry) return true
       const expiry = new Date(row.expiry).getTime()
       return Number.isNaN(expiry) || expiry - now < ONE_DAY_MS
@@ -103,21 +144,57 @@ Deno.serve(async (req) => {
       })
     }
 
-    const email = Deno.env.get('SHIPROCKET_EMAIL')
-    const password = Deno.env.get('SHIPROCKET_PASSWORD')
-    if (!email || !password) {
-      throw new Error('Missing Shiprocket credentials')
+    const needsShiprocket = refreshTargets.some((row) => row.service === 'shiprocket')
+    const needsFlipkart = refreshTargets.some((row) => row.service === 'flipkart')
+
+    let shiprocketToken: string | null = null
+    let shiprocketExpiry: string | null = null
+    if (needsShiprocket) {
+      const email = Deno.env.get('SHIPROCKET_EMAIL')
+      const password = Deno.env.get('SHIPROCKET_PASSWORD')
+      if (!email || !password) {
+        throw new Error('Missing Shiprocket credentials')
+      }
+
+      shiprocketToken = await fetchShiprocketToken(email, password)
+      shiprocketExpiry = new Date(now + TEN_DAYS_MS).toISOString()
     }
 
-    const token = await fetchShiprocketToken(email, password)
-    const newExpiry = new Date(now + TEN_DAYS_MS).toISOString()
+    let flipkartToken: string | null = null
+    let flipkartExpiry: string | null = null
+    if (needsFlipkart) {
+      const appId = Deno.env.get('FLIPKART_APP_ID')
+      const appSecret = Deno.env.get('FLIPKART_APP_SECRET')
+      if (!appId || !appSecret) {
+        throw new Error('Missing FLIPKART_APP_ID or FLIPKART_APP_SECRET')
+      }
+
+      const flipkartAuth = await fetchFlipkartToken(appId, appSecret)
+      flipkartToken = flipkartAuth.token
+      flipkartExpiry = flipkartAuth.expiry
+    }
 
     const updatedServices: string[] = []
 
     for (const row of refreshTargets) {
+      let keyToStore: string | null = null
+      let expiryToStore: string | null = null
+
+      if (row.service === 'shiprocket') {
+        keyToStore = shiprocketToken
+        expiryToStore = shiprocketExpiry
+      } else if (row.service === 'flipkart') {
+        keyToStore = flipkartToken
+        expiryToStore = flipkartExpiry
+      }
+
+      if (!keyToStore || !expiryToStore) {
+        throw new Error(`Unable to refresh token for service: ${row.service}`)
+      }
+
       const { error: updateError } = await supabase
         .from('api_keys')
-        .update({ key: token, expiry: newExpiry })
+        .update({ key: keyToStore, expiry: expiryToStore })
         .eq('id', row.id)
 
       if (updateError) {

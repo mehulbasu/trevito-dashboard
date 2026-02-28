@@ -1,6 +1,7 @@
 import { Container, Stack, Title } from '@mantine/core';
 import ShiprocketSyncPanel from '@/components/data/ShiprocketSyncPanel';
 import AmazonSyncPanel from '@/components/data/AmazonSyncPanel';
+import FlipkartSyncPanel from '@/components/data/FlipkartSyncPanel';
 import VyaparUploadPanel from '@/components/data/VyaparUploadPanel';
 import { createClient } from '@/lib/supabase/server';
 
@@ -55,9 +56,27 @@ async function getAmazonLastUpdated() {
   return data?.updated ?? null;
 }
 
+async function getFlipkartLastUpdated() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('sales')
+    .from('last_updated')
+    .select('updated')
+    .eq('channel', 'flipkart')
+    .maybeSingle<{ updated: string }>();
+
+  if (error) {
+    console.error('Error fetching Flipkart last updated timestamp:', error);
+    return null;
+  }
+
+  return data?.updated ?? null;
+}
+
 export default async function DataPage() {
   const shiprocketLastUpdated = await getShiprocketLastUpdated();
   const amazonLastUpdated = await getAmazonLastUpdated();
+  const flipkartLastUpdated = await getFlipkartLastUpdated();
   const vyaparLastUpdated = await getVyaparLastUpdated();
 
   return (
@@ -66,6 +85,7 @@ export default async function DataPage() {
         <Title order={2}>Manage data</Title>
         <ShiprocketSyncPanel initialLastUpdated={shiprocketLastUpdated} />
         <AmazonSyncPanel initialLastUpdated={amazonLastUpdated} />
+        <FlipkartSyncPanel initialLastUpdated={flipkartLastUpdated} />
         <VyaparUploadPanel initialLastUpdated={vyaparLastUpdated} />
       </Stack>
     </Container>
