@@ -1,9 +1,11 @@
 'use client';
 
-import { Button, FileInput, Stack, Text } from '@mantine/core';
+import { Badge, Button, Card, FileInput, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { IconFileSpreadsheet } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { formatLastUpdated } from '@/components/data/utils';
 
 type VyaparUploadResponse = {
   message?: string;
@@ -12,9 +14,6 @@ type VyaparUploadResponse = {
 type VyaparUploadPanelProps = {
   initialLastUpdated: string | null;
 };
-
-const formatLastUpdated = (timestamp: string | null) =>
-  timestamp ? new Date(timestamp).toLocaleString() : 'Not synced yet';
 
 const toBase64 = (bytes: Uint8Array) => {
   let binary = '';
@@ -102,21 +101,37 @@ export default function VyaparUploadPanel({ initialLastUpdated }: VyaparUploadPa
   };
 
   return (
-    <Stack gap="xs">
-      <Text fw={500}>Vyapar sales import</Text>
-      <FileInput
-        label="Vyapar .xls file"
-        placeholder="Select .xls file"
-        value={file}
-        onChange={setFile}
-        accept=".xls,application/vnd.ms-excel"
-      />
-      <Button onClick={handleUpload} loading={isUploading} w="fit-content">
-        Upload Vyapar file
-      </Button>
-      <Text c="dimmed" size="sm">
-        Last updated: {formatLastUpdated(lastUpdated)}
-      </Text>
-    </Stack>
+    <Card withBorder shadow="sm" radius="md" padding="lg">
+      <Stack gap="md">
+        <Group justify="space-between">
+          <Group gap="sm">
+            <ThemeIcon variant="light" color="teal" size="lg" radius="md">
+              <IconFileSpreadsheet size={20} />
+            </ThemeIcon>
+            <div>
+              <Text fw={600} size="lg">Vyapar</Text>
+              <Text c="dimmed" size="xs">Manual sales import</Text>
+            </div>
+          </Group>
+          <Badge variant="light" color={lastUpdated ? 'green' : 'gray'}>
+            {lastUpdated ? 'Uploaded' : 'Not uploaded'}
+          </Badge>
+        </Group>
+        <FileInput
+          placeholder="Select .xls file"
+          value={file}
+          onChange={setFile}
+          accept=".xls,application/vnd.ms-excel"
+        />
+        <Group justify="space-between" align="center">
+          <Text c="dimmed" size="sm">
+            Last updated: {formatLastUpdated(lastUpdated)}
+          </Text>
+          <Button onClick={handleUpload} loading={isUploading}>
+            Upload file
+          </Button>
+        </Group>
+      </Stack>
+    </Card>
   );
 }
