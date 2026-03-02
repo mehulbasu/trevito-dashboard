@@ -11,27 +11,16 @@ export default function Home() {
       }}
     >
       <Stack align="center" gap="xl" style={{ width: '100%', maxWidth: 380, padding: '2rem' }}>
-        <Image src="/Logo.svg" alt="Trévito" h={90} fit="contain" />
+        <Image src="/Logo.svg" alt="Trévito" fit="contain" />
         <Stack align="center" gap={6}>
-          <Title
-            order={1}
-            style={{
-              letterSpacing: '0.18em',
-              fontSize: '2.25rem',
-              fontWeight: 700,
-            }}
-          >
-            TRÉVITO
-          </Title>
           <Text
             c="dimmed"
-            size="sm"
-            style={{ letterSpacing: '0.25em', textTransform: 'uppercase' }}
+            size='lg'
+            style={{ letterSpacing: '0.1em', textTransform: 'uppercase' }}
           >
             Sales Analytics
           </Text>
         </Stack>
-        <Divider style={{ width: '100%' }} />
         <Stack w="100%" gap="sm">
           <Button
             component="a"
