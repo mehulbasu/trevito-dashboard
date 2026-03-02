@@ -1,2 +1,9 @@
+const lastUpdatedFormatter = new Intl.DateTimeFormat(undefined, {
+  month: 'long',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 export const formatLastUpdated = (timestamp: string | null) =>
-  timestamp ? new Date(timestamp).toLocaleString() : 'Never';
+  timestamp ? lastUpdatedFormatter.format(new Date(timestamp)) : 'Never';

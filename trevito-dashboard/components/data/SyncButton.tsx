@@ -4,6 +4,7 @@ import { Button } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { IconRefresh } from '@tabler/icons-react';
 
 type SyncResponse = {
   orders_processed?: number;
@@ -66,8 +67,8 @@ export default function SyncButton({ functionName, channelName, onSyncSuccess }:
   };
 
   return (
-    <Button onClick={handleSync} loading={isSyncing}>
-      Sync {channelName}
+    <Button onClick={handleSync} loading={isSyncing} leftSection={<IconRefresh size={16} />}>
+      Sync
     </Button>
   );
 }

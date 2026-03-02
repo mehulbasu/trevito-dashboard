@@ -33,11 +33,11 @@ export default async function DataPage() {
           <ActionIcon
             component="a"
             href="/"
-            variant="subtle"
-            size="lg"
+            variant="light"
+            size="xl"
             aria-label="Back to home"
           >
-            <IconArrowLeft size={20} />
+            <IconArrowLeft />
           </ActionIcon>
           <div>
             <Title order={2}>Manage data</Title>
@@ -45,8 +45,8 @@ export default async function DataPage() {
           </div>
         </Group>
         <SyncPanel
-          title="Shiprocket"
-          subtitle="Shipping & order data"
+          title="Shopify"
+          subtitle="Shipping data from Shiprocket"
           icon={<IconTruck size={20} />}
           iconColor="indigo"
           channelKey="shiprocket"

@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge, Button, Card, FileInput, Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconFileSpreadsheet } from '@tabler/icons-react';
+import { IconFileSpreadsheet, IconUpload } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -127,7 +127,7 @@ export default function VyaparUploadPanel({ initialLastUpdated }: VyaparUploadPa
           <Text c="dimmed" size="sm">
             Last updated: {formatLastUpdated(lastUpdated)}
           </Text>
-          <Button onClick={handleUpload} loading={isUploading}>
+          <Button onClick={handleUpload} loading={isUploading} leftSection={<IconUpload size={16} />}>
             Upload file
           </Button>
         </Group>
