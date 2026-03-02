@@ -127,7 +127,7 @@ export default function VyaparUploadPanel({ initialLastUpdated }: VyaparUploadPa
           <Text c="dimmed" size="sm">
             Last updated: {formatLastUpdated(lastUpdated)}
           </Text>
-          <Button onClick={handleUpload} loading={isUploading} leftSection={<IconUpload size={16} />}>
+          <Button onClick={handleUpload} loading={isUploading} leftSection={<IconUpload size={16} />} color="dark" radius="md">
             Upload file
           </Button>
         </Group>

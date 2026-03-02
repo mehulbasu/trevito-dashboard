@@ -34,6 +34,7 @@ export default async function DataPage() {
             component="a"
             href="/"
             variant="light"
+            color="dark"
             size="xl"
             aria-label="Back to home"
           >

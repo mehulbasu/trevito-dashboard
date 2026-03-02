@@ -67,7 +67,7 @@ export default function SyncButton({ functionName, channelName, onSyncSuccess }:
   };
 
   return (
-    <Button onClick={handleSync} loading={isSyncing} leftSection={<IconRefresh size={16} />}>
+    <Button onClick={handleSync} loading={isSyncing} leftSection={<IconRefresh size={16} />} color="dark" radius="md">
       Sync
     </Button>
   );
