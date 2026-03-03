@@ -165,15 +165,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (orders.length === 0) {
+    const filteredOrders = orders.filter((order) => parseNumber(order.total) !== 1)
+
+    if (filteredOrders.length === 0) {
       return new Response(JSON.stringify({ message: 'No Shiprocket orders returned' }), {
         status: 200,
         headers: {  ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
-    // TODO!: Exclude orders with total_amount = 1.00 (free samples to influencers)
-    const processedOrders = orders.map((order) => {
+    const processedOrders = filteredOrders.map((order) => {
       const discountCodes = order.others?.discount_codes ?? []
       const noteAttrs = order.others?.note_attributes
       const utmTracking = (() => {
@@ -215,7 +216,7 @@ Deno.serve(async (req) => {
       throw orderError
     }
 
-    const itemsToInsert = orders.flatMap((order) =>
+    const itemsToInsert = filteredOrders.flatMap((order) =>
       order.products.map((product) => ({
         shiprocket_order_id: order.id,
         sku: product.channel_sku,
@@ -225,7 +226,7 @@ Deno.serve(async (req) => {
       }))
     )
 
-    const skusByOrder = orders.reduce<Record<number, string[]>>((acc, order) => {
+    const skusByOrder = filteredOrders.reduce<Record<number, string[]>>((acc, order) => {
       acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku)))
       return acc
     }, {})
