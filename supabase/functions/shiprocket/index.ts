@@ -16,7 +16,7 @@
  * - 200: `{ orders_processed: number, items_processed: number }` or `{ message: string }`.
  * - 500: `{ error: string }`.
  */
-// TODO!!: Calculate revenue without tax
+
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { corsHeaders } from 'npm:@supabase/supabase-js@2.95.3/cors'
 import { createClient } from 'npm:@supabase/supabase-js@2.95.3'
@@ -40,11 +40,12 @@ type ShiprocketOrder = {
   customer_city: string
   customer_state: string
   customer_pincode: string
-  products: Array<{ channel_sku: string; quantity: number; mrp: number; discount_including_tax: number }>
+  products: Array<{ channel_sku: string; quantity: number; price: string; discount: number; mrp: number; discount_including_tax: number }>
   shipments: Array<{ shipped_date: string | null; delivered_date: string | null }>
   others?: {
     discount_codes?: Array<{ code?: string; amount?: string }>
     note_attributes?: Array<{ name: string; value: string }>
+    utm_and_tracking_details?: string
   }
 }
 
@@ -174,8 +175,14 @@ Deno.serve(async (req) => {
     // TODO!: Exclude orders with total_amount = 1.00 (free samples to influencers)
     const processedOrders = orders.map((order) => {
       const discountCodes = order.others?.discount_codes ?? []
-      const totalDiscount = discountCodes.reduce((sum, code) => sum + parseNumber(code.amount), 0)
       const noteAttrs = order.others?.note_attributes
+      const utmTracking = (() => {
+        try {
+          return order.others?.utm_and_tracking_details
+            ? JSON.parse(order.others.utm_and_tracking_details)
+            : {}
+        } catch { return {} }
+      })()
 
       const shipment = order.shipments?.[0]
 
@@ -193,13 +200,10 @@ Deno.serve(async (req) => {
         customer_state: order.customer_state,
         customer_pincode: order.customer_pincode,
         payment_method: order.payment_method,
-        total_amount: parseNumber(order.total),
-        tax_amount: parseNumber(order.tax),
         discount_code: discountCodes.map((code) => code.code).filter(Boolean).join(', ') || null,
-        total_discount: totalDiscount,
-        utm_source: getNoteAttribute(noteAttrs, 'utm_source'),
-        utm_medium: getNoteAttribute(noteAttrs, 'utm_medium'),
-        utm_campaign: getNoteAttribute(noteAttrs, 'utm_campaign')
+        utm_source: getNoteAttribute(noteAttrs, 'utm_source') ?? utmTracking.utm_source ?? null,
+        utm_medium: getNoteAttribute(noteAttrs, 'utm_medium') ?? utmTracking.utm_medium ?? null,
+        utm_campaign: getNoteAttribute(noteAttrs, 'utm_campaign') ?? utmTracking.utm_campaign ?? null
       }
     })
 
@@ -211,13 +215,13 @@ Deno.serve(async (req) => {
       throw orderError
     }
 
-    // TODO: Selling price is currently per-unit. Multiply by quantity?
     const itemsToInsert = orders.flatMap((order) =>
       order.products.map((product) => ({
         shiprocket_order_id: order.id,
         sku: product.channel_sku,
         quantity: product.quantity,
-        selling_price: parseNumber(product.mrp) - parseNumber(product.discount_including_tax)
+        net_revenue: parseNumber(product.price) / 1.18 - parseNumber(product.discount),
+        net_discount: parseNumber(product.discount)
       }))
     )
 
