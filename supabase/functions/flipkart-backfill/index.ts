@@ -318,15 +318,19 @@ Deno.serve(async (req) => {
     const itemsToUpsert = shipments.flatMap((shipment) =>
       (shipment.orderItems ?? [])
         .filter((item) => shipment.shipmentId && item.orderItemId)
-        .map((item) => ({
-          shipment_id: shipment.shipmentId as string,
-          order_item_id: item.orderItemId as string,
-          order_date: parseDate(item.orderDate),
-          status: item.status ?? null,
-          quantity: item.quantity ?? null,
-          sku: item.sku ?? null,
-          total_price: parseNumber(item.priceComponents?.totalPrice)
-        }))
+        .map((item) => {
+          const total_price = parseNumber(item.priceComponents?.totalPrice)
+          return {
+            shipment_id: shipment.shipmentId as string,
+            order_item_id: item.orderItemId as string,
+            order_date: parseDate(item.orderDate),
+            status: item.status ?? null,
+            quantity: item.quantity ?? null,
+            sku: item.sku ?? null,
+            total_price,
+            net_revenue: total_price != null ? Number((total_price / 1.18).toFixed(2)) : null
+          }
+        })
     )
 
     if (itemsToUpsert.length > 0) {
