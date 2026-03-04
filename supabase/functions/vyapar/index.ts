@@ -227,6 +227,7 @@ Deno.serve(async (req) => {
       }
     }
 
+    // TODO!!: Rename to net_revenue and confirm per-unit tax-free calculation
     const itemsRows = Array.from(itemAggregate.values()).map((item) => ({
       invoice_no: item.invoice_no,
       sku: item.sku,

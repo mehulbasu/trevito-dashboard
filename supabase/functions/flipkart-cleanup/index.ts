@@ -2,8 +2,8 @@ import "@supabase/functions-js/edge-runtime.d.ts"
 import { corsHeaders } from 'npm:@supabase/supabase-js@2.95.3/cors'
 import { createClient } from 'npm:@supabase/supabase-js@2.95.3'
 // TODO: This function is untested
-// TODO: Adjust cancellationDate window and schedule as a cron job
-
+// TODO!: Adjust cancellationDate window and schedule as a cron job
+// TODO: Should this also handle returns and failed shipments? How?
 type ApiKeyRow = {
   key: string
   expiry: string | null
