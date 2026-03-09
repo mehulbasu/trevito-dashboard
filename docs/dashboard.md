@@ -19,3 +19,12 @@ While creating this Dashboard, please respect best practices for React and Next.
 - `TR PF008`: Women's Gift Set
 - `TR PF009`: Illusion
 - `TR PF010`: Legend
+
+#### Technical Details
+Only the orders which meet the criteria below should be included in the dashboard:
+- Shiprocket: `shiprocket_orders.order_status` = `DELIVERED`
+- Flipkart: `flipkart_items.status` = `DELIVERED`, `SHIPPED` or `READY_TO_DISPATCH`
+- Amazon: `amazon_orders.order_status` = `SHIPPED`
+- Vyapar: Include all items
+
+I’m looking for a hybrid architecture where the URL acts as the primary state for filters. I’d like to keep the data processing (like merging our various sales tables) on the database/server side via views or a unified API, and have the frontend reactively update based on URL parameter changes.

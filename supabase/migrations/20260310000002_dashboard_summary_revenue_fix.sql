@@ -20,6 +20,13 @@ CREATE EXTENSION IF NOT EXISTS "pg_cron" WITH SCHEMA "pg_catalog";
 
 
 
+CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";
+
+
+
+
+
+
 CREATE SCHEMA IF NOT EXISTS "private";
 
 
@@ -101,6 +108,87 @@ $$;
 
 
 ALTER FUNCTION "public"."rls_auto_enable"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[] DEFAULT ARRAY['amazon'::"text", 'flipkart'::"text", 'shopify'::"text", 'vyapar'::"text"]) RETURNS TABLE("channel" "text", "sku" "text", "month_start" "date", "total_revenue" numeric, "total_quantity" bigint)
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'sales', 'public', 'pg_catalog'
+    AS $$
+  -- Amazon
+  SELECT
+    'amazon'::text                          AS channel,
+    i.sku,
+    date_trunc('month', o.order_date)::date AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                            AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)            AS total_quantity
+  FROM sales.amazon_items i
+  JOIN sales.amazon_orders o ON o.order_id = i.order_id
+  WHERE 'amazon' = ANY(channels)
+    AND o.order_status = 'SHIPPED'
+    AND o.order_date >= date_from
+    AND o.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', o.order_date)
+
+  UNION ALL
+
+  -- Flipkart
+  SELECT
+    'flipkart'::text                          AS channel,
+    i.sku,
+    date_trunc('month', i.order_date)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                              AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)              AS total_quantity
+  FROM sales.flipkart_items i
+  WHERE 'flipkart' = ANY(channels)
+    AND i.status IN ('DELIVERED', 'SHIPPED', 'READY_TO_DISPATCH')
+    AND i.order_date >= date_from
+    AND i.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', i.order_date)
+
+  UNION ALL
+
+  -- Shiprocket (labeled "shopify")
+  SELECT
+    'shopify'::text                           AS channel,
+    i.sku,
+    date_trunc('month', o.order_date)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                              AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)              AS total_quantity
+  FROM sales.shiprocket_items i
+  JOIN sales.shiprocket_orders o ON o.shiprocket_id = i.shiprocket_order_id
+  WHERE 'shopify' = ANY(channels)
+    AND o.order_status = 'DELIVERED'
+    AND o.order_date >= date_from
+    AND o.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', o.order_date)
+
+  UNION ALL
+
+  -- Vyapar
+  SELECT
+    'vyapar'::text                                        AS channel,
+    i.sku,
+    date_trunc('month', s.sale_date::timestamptz)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                                          AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)                          AS total_quantity
+  FROM sales.vyapar_items i
+  JOIN sales.vyapar_sales s ON s.invoice_no = i.invoice_no
+  WHERE 'vyapar' = ANY(channels)
+    AND s.sale_date >= date_from::date
+    AND s.sale_date <  date_to::date
+  GROUP BY i.sku, date_trunc('month', s.sale_date::timestamptz)
+$$;
+
+
+ALTER FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) OWNER TO "postgres";
 
 SET default_tablespace = '';
 
@@ -450,6 +538,9 @@ ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
+
+
+
 GRANT USAGE ON SCHEMA "private" TO "service_role";
 
 
@@ -638,9 +729,21 @@ GRANT USAGE ON SCHEMA "sales" TO "service_role";
 
 
 
+
+
+
+
+
+
 GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "anon";
 GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "anon";
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "authenticated";
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "service_role";
 
 
 
@@ -803,9 +906,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON TABL
 
 
 
-
-
-
-drop extension if exists "pg_net";
-
+--
+-- Dumped schema changes for auth and storage
+--
 
