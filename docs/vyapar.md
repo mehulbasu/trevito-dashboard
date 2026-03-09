@@ -16,7 +16,7 @@ CREATE TABLE sales.vyapar_items (
     invoice_no BIGINT NOT NULL REFERENCES sales.vyapar_sales(invoice_no) ON DELETE CASCADE,
     sku TEXT,
     quantity INTEGER,
-    net_price DECIMAL(12, 2),   -- "Total Amount" from sheet
+    net_revenue DECIMAL(12, 2),   -- Total amount - GST / item quantity
     
     -- Ensure we don't duplicate the same item in the same invoice
     CONSTRAINT unique_vyapar_item UNIQUE (invoice_no, sku)
