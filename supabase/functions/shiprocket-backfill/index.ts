@@ -39,11 +39,12 @@ type ShiprocketOrder = {
   customer_city: string
   customer_state: string
   customer_pincode: string
-  products: Array<{ channel_sku: string; quantity: number; mrp: number; discount_including_tax: number }>
+  products: Array<{ channel_sku: string; quantity: number; price: string; discount: number; mrp: number; discount_including_tax: number }>
   shipments: Array<{ shipped_date: string | null; delivered_date: string | null }>
   others?: {
     discount_codes?: Array<{ code?: string; amount?: string }>
     note_attributes?: Array<{ name: string; value: string }>
+    utm_and_tracking_details?: string
   }
 }
 
@@ -165,17 +166,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (orders.length === 0) {
+    const filteredOrders = orders.filter((order) => parseNumber(order.total) !== 1)
+
+    if (filteredOrders.length === 0) {
       return new Response(JSON.stringify({ message: 'No Shiprocket orders returned' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       })
     }
 
-    const processedOrders = orders.map((order) => {
+    const processedOrders = filteredOrders.map((order) => {
       const discountCodes = order.others?.discount_codes ?? []
-      const totalDiscount = discountCodes.reduce((sum, code) => sum + parseNumber(code.amount), 0)
       const noteAttrs = order.others?.note_attributes
+      const utmTracking = (() => {
+        try {
+          return order.others?.utm_and_tracking_details
+            ? JSON.parse(order.others.utm_and_tracking_details)
+            : {}
+        } catch { return {} }
+      })()
 
       const shipment = order.shipments?.[0]
 
@@ -193,13 +202,10 @@ Deno.serve(async (req) => {
         customer_state: order.customer_state,
         customer_pincode: order.customer_pincode,
         payment_method: order.payment_method,
-        total_amount: parseNumber(order.total),
-        tax_amount: parseNumber(order.tax),
         discount_code: discountCodes.map((code) => code.code).filter(Boolean).join(', ') || null,
-        total_discount: totalDiscount,
-        utm_source: getNoteAttribute(noteAttrs, 'utm_source'),
-        utm_medium: getNoteAttribute(noteAttrs, 'utm_medium'),
-        utm_campaign: getNoteAttribute(noteAttrs, 'utm_campaign')
+        utm_source: getNoteAttribute(noteAttrs, 'utm_source') ?? utmTracking.utm_source ?? null,
+        utm_medium: getNoteAttribute(noteAttrs, 'utm_medium') ?? utmTracking.utm_medium ?? null,
+        utm_campaign: getNoteAttribute(noteAttrs, 'utm_campaign') ?? utmTracking.utm_campaign ?? null
       }
     })
 
@@ -211,17 +217,18 @@ Deno.serve(async (req) => {
       throw orderError
     }
 
-    const itemsToInsert = orders.flatMap((order) =>
+    const itemsToInsert = filteredOrders.flatMap((order) =>
       order.products.map((product) => ({
         shiprocket_order_id: order.id,
-        sku: product.channel_sku,
+        sku: product.channel_sku.replace(/-/g, ' '),
         quantity: product.quantity,
-        selling_price: parseNumber(product.mrp) - parseNumber(product.discount_including_tax)
+        net_revenue: parseNumber(product.price) / 1.18 - parseNumber(product.discount),
+        net_discount: parseNumber(product.discount)
       }))
     )
 
-    const skusByOrder = orders.reduce<Record<number, string[]>>((acc, order) => {
-      acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku)))
+    const skusByOrder = filteredOrders.reduce<Record<number, string[]>>((acc, order) => {
+      acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku.replace(/-/g, ' '))))
       return acc
     }, {})
 
@@ -249,6 +256,14 @@ Deno.serve(async (req) => {
           throw cleanupError
         }
       }
+    }
+
+    const { error: lastUpdatedError } = await salesClient
+      .from('last_updated')
+      .upsert({ channel: 'shiprocket', updated: new Date() }, { onConflict: 'channel' })
+
+    if (lastUpdatedError) {
+      throw lastUpdatedError
     }
 
     return new Response(JSON.stringify({

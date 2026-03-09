@@ -90,15 +90,7 @@ const decodeBase64ToBytes = (base64: string) => {
   return bytes
 }
 
-const upsertVyaparLastUpdated = async (salesClient: ReturnType<typeof createClient>) => {
-  const { error: lastUpdatedError } = await salesClient
-    .from('last_updated')
-    .upsert({ channel: 'vyapar', updated: new Date() }, { onConflict: 'channel' })
 
-  if (lastUpdatedError) {
-    throw lastUpdatedError
-  }
-}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -174,7 +166,9 @@ Deno.serve(async (req) => {
       .filter((row): row is NonNullable<typeof row> => row != null)
 
     if (salesRows.length === 0) {
-      await upsertVyaparLastUpdated(salesClient)
+      await salesClient
+        .from('last_updated')
+        .upsert({ channel: 'vyapar', updated: new Date() }, { onConflict: 'channel' })
 
       return new Response(JSON.stringify({
         message: 'No sale records found in "Sale Report"',
@@ -197,7 +191,7 @@ Deno.serve(async (req) => {
     console.log(`Parsed and upserted ${salesRows.length} sales rows into database`)
 
     const validInvoices = new Set(salesRows.map((row) => row.invoice_no))
-    const itemAggregate = new Map<string, { invoice_no: number; sku: string; quantity: number; net_price: number }>()
+    const itemAggregate = new Map<string, { invoice_no: number; sku: string; quantity: number; net_revenue: number }>()
 
     for (const row of saleItemsRows) {
       const invoiceNo = parseInteger(row['Invoice No.'])
@@ -206,32 +200,30 @@ Deno.serve(async (req) => {
       const amount = parseNumber(row.Amount)
       const gst = parseLeadingNumber(row.GST)
 
-      if (!invoiceNo || !sku || quantity == null || amount == null || gst == null) continue
+      if (!invoiceNo || !sku || !quantity || amount == null || gst == null) continue
       if (!validInvoices.has(invoiceNo)) continue
 
-      const netPrice = amount - gst
-
       const key = `${invoiceNo}::${sku}`
-      const existing = itemAggregate.get(key)
       
-      if (existing) {
-        existing.quantity += quantity
-        existing.net_price += netPrice
-      } else {
-        itemAggregate.set(key, {
-          invoice_no: invoiceNo,
-          sku,
-          quantity,
-          net_price: netPrice
-        })
+      // NOTE: Assuming that duplicate (invoice_no, sku) pairs in "Sale Items" sheet are not expected
+      if (itemAggregate.has(key)) {
+        console.warn(`Duplicate (invoice_no, sku) in "Sale Items": invoice=${invoiceNo}, sku=${sku}. Skipping row.`)
+        continue
       }
+
+      itemAggregate.set(key, {
+        invoice_no: invoiceNo,
+        sku,
+        quantity,
+        net_revenue: (amount - gst) / quantity
+      })
     }
 
     const itemsRows = Array.from(itemAggregate.values()).map((item) => ({
       invoice_no: item.invoice_no,
       sku: item.sku,
       quantity: item.quantity,
-      net_price: Number(item.net_price.toFixed(2))
+      net_revenue: Number(item.net_revenue.toFixed(2))
     }))
 
     if (itemsRows.length > 0) {
@@ -246,7 +238,13 @@ Deno.serve(async (req) => {
 
     console.log(`Parsed and upserted ${itemsRows.length} item rows from "Sale Items" sheet`)
 
-    await upsertVyaparLastUpdated(salesClient)
+    const { error: lastUpdatedError } = await salesClient
+      .from('last_updated')
+      .upsert({ channel: 'vyapar', updated: new Date() }, { onConflict: 'channel' })
+
+    if (lastUpdatedError) {
+      throw lastUpdatedError
+    }
 
     return new Response(JSON.stringify({
       message: 'Vyapar file processed successfully',

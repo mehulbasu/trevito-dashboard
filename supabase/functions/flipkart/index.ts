@@ -322,18 +322,31 @@ Deno.serve(async (req) => {
       console.log(`[flipkart] items cleanup complete | id=${requestId} | shipmentCount=${shipmentIds.length}`)
     }
 
+    // NOTE: Assume that total_price from Flipkart API is per-unit for each item
+    /**
+     * The price value returned by Flipkart API reflects logistics fees.
+     * Logistic fees are dependent on customer location (typically around INR 135), and are subtracted
+     * from the total order price paid by customer. This amount is returned as total_price in priceComponents
+     * and includes 18% GST. We want to store the tax-free amount of total_price.
+     */
+    // BUG: If order has more than 1 item, how will logistics fee be reflected in total_price of each item?
+    // TODO: Find order with multiple items to verify how logistics fee is reflected by the API
     const itemsToUpsert = shipments.flatMap((shipment) =>
       (shipment.orderItems ?? [])
         .filter((item) => shipment.shipmentId && item.orderItemId)
-        .map((item) => ({
-          shipment_id: shipment.shipmentId as string,
-          order_item_id: item.orderItemId as string,
-          order_date: parseDate(item.orderDate),
-          status: item.status ?? null,
-          quantity: item.quantity ?? null,
-          sku: item.sku ?? null,
-          total_price: parseNumber(item.priceComponents?.totalPrice)
-        }))
+        .map((item) => {
+          const total_price = parseNumber(item.priceComponents?.totalPrice)
+          return {
+            shipment_id: shipment.shipmentId as string,
+            order_item_id: item.orderItemId as string,
+            order_date: parseDate(item.orderDate),
+            status: item.status ?? null,
+            quantity: item.quantity ?? null,
+            sku: item.sku ?? null,
+            total_price,
+            net_revenue: total_price != null ? Number((total_price / 1.18).toFixed(2)) : null
+          }
+        })
     )
 
     if (itemsToUpsert.length > 0) {
