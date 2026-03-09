@@ -219,7 +219,7 @@ Deno.serve(async (req) => {
     const itemsToInsert = filteredOrders.flatMap((order) =>
       order.products.map((product) => ({
         shiprocket_order_id: order.id,
-        sku: product.channel_sku,
+        sku: product.channel_sku.replace(/-/g, ' '),
         quantity: product.quantity,
         net_revenue: parseNumber(product.price) / 1.18 - parseNumber(product.discount),
         net_discount: parseNumber(product.discount)
@@ -227,7 +227,7 @@ Deno.serve(async (req) => {
     )
 
     const skusByOrder = filteredOrders.reduce<Record<number, string[]>>((acc, order) => {
-      acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku)))
+      acc[order.id] = Array.from(new Set(order.products.map((product) => product.channel_sku.replace(/-/g, ' '))))
       return acc
     }, {})
 
