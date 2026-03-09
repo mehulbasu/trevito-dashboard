@@ -346,6 +346,14 @@ Deno.serve(async (req) => {
 
     console.log(`[flipkart-backfill] item upsert complete | id=${requestId} | rows=${itemsToUpsert.length}`)
 
+    const { error: lastUpdatedError } = await salesClient
+      .from('last_updated')
+      .upsert({ channel: 'flipkart', updated: new Date() }, { onConflict: 'channel' })
+
+    if (lastUpdatedError) {
+      throw lastUpdatedError
+    }
+
     let geoEnrichQueued = false
     if (shipmentIds.length > 0) {
       try {

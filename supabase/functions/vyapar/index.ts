@@ -204,7 +204,8 @@ Deno.serve(async (req) => {
       if (!validInvoices.has(invoiceNo)) continue
 
       const key = `${invoiceNo}::${sku}`
-
+      
+      // NOTE: Assuming that duplicate (invoice_no, sku) pairs in "Sale Items" sheet are not expected
       if (itemAggregate.has(key)) {
         console.warn(`Duplicate (invoice_no, sku) in "Sale Items": invoice=${invoiceNo}, sku=${sku}. Skipping row.`)
         continue
