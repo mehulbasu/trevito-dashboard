@@ -1,0 +1,912 @@
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+
+CREATE EXTENSION IF NOT EXISTS "pg_cron" WITH SCHEMA "pg_catalog";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE SCHEMA IF NOT EXISTS "private";
+
+
+ALTER SCHEMA "private" OWNER TO "postgres";
+
+
+COMMENT ON SCHEMA "public" IS 'standard public schema';
+
+
+
+CREATE SCHEMA IF NOT EXISTS "sales";
+
+
+ALTER SCHEMA "sales" OWNER TO "postgres";
+
+
+CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION "public"."rls_auto_enable"() RETURNS "event_trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'pg_catalog'
+    AS $$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN
+    SELECT *
+    FROM pg_event_trigger_ddl_commands()
+    WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+      AND object_type IN ('table','partitioned table')
+  LOOP
+     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
+      BEGIN
+        EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
+        RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
+      END;
+     ELSE
+        RAISE LOG 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
+     END IF;
+  END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."rls_auto_enable"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[] DEFAULT ARRAY['amazon'::"text", 'flipkart'::"text", 'shopify'::"text", 'vyapar'::"text"]) RETURNS TABLE("channel" "text", "sku" "text", "month_start" "date", "total_revenue" numeric, "total_quantity" bigint)
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'sales', 'public', 'pg_catalog'
+    AS $$
+  -- Amazon
+  SELECT
+    'amazon'::text                          AS channel,
+    i.sku,
+    date_trunc('month', o.order_date)::date AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                            AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)            AS total_quantity
+  FROM sales.amazon_items i
+  JOIN sales.amazon_orders o ON o.order_id = i.order_id
+  WHERE 'amazon' = ANY(channels)
+    AND o.order_status = 'SHIPPED'
+    AND o.order_date >= date_from
+    AND o.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', o.order_date)
+
+  UNION ALL
+
+  -- Flipkart
+  SELECT
+    'flipkart'::text                          AS channel,
+    i.sku,
+    date_trunc('month', i.order_date)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                              AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)              AS total_quantity
+  FROM sales.flipkart_items i
+  WHERE 'flipkart' = ANY(channels)
+    AND i.status IN ('DELIVERED', 'SHIPPED', 'READY_TO_DISPATCH')
+    AND i.order_date >= date_from
+    AND i.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', i.order_date)
+
+  UNION ALL
+
+  -- Shiprocket (labeled "shopify")
+  SELECT
+    'shopify'::text                           AS channel,
+    i.sku,
+    date_trunc('month', o.order_date)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                              AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)              AS total_quantity
+  FROM sales.shiprocket_items i
+  JOIN sales.shiprocket_orders o ON o.shiprocket_id = i.shiprocket_order_id
+  WHERE 'shopify' = ANY(channels)
+    AND o.order_status = 'DELIVERED'
+    AND o.order_date >= date_from
+    AND o.order_date <  date_to
+  GROUP BY i.sku, date_trunc('month', o.order_date)
+
+  UNION ALL
+
+  -- Vyapar
+  SELECT
+    'vyapar'::text                                        AS channel,
+    i.sku,
+    date_trunc('month', s.sale_date::timestamptz)::date   AS month_start,
+    COALESCE(SUM(i.net_revenue), 0)
+      + COALESCE(SUM(i.net_revenue * (i.quantity - 1)) FILTER (WHERE i.quantity > 1), 0)
+                                                          AS total_revenue,
+    COALESCE(SUM(i.quantity), 0)                          AS total_quantity
+  FROM sales.vyapar_items i
+  JOIN sales.vyapar_sales s ON s.invoice_no = i.invoice_no
+  WHERE 'vyapar' = ANY(channels)
+    AND s.sale_date >= date_from::date
+    AND s.sale_date <  date_to::date
+  GROUP BY i.sku, date_trunc('month', s.sale_date::timestamptz)
+$$;
+
+
+ALTER FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) OWNER TO "postgres";
+
+SET default_tablespace = '';
+
+SET default_table_access_method = "heap";
+
+
+CREATE TABLE IF NOT EXISTS "private"."api_keys" (
+    "id" bigint NOT NULL,
+    "service" "text" NOT NULL,
+    "key" "text" NOT NULL,
+    "expiry" timestamp with time zone
+);
+
+
+ALTER TABLE "private"."api_keys" OWNER TO "postgres";
+
+
+ALTER TABLE "private"."api_keys" ALTER COLUMN "id" ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME "private"."api_keys_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+
+CREATE TABLE IF NOT EXISTS "sales"."amazon_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "order_id" "text" NOT NULL,
+    "amazon_item_id" "text",
+    "sku" "text",
+    "quantity" integer,
+    "unit_price" numeric(10,2),
+    "net_revenue" numeric(10,2)
+);
+
+
+ALTER TABLE "sales"."amazon_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."amazon_orders" (
+    "order_id" "text" NOT NULL,
+    "order_date" timestamp with time zone,
+    "order_status" "text",
+    "customer_city" "text",
+    "customer_state" "text",
+    "customer_pincode" "text",
+    "last_accessed_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "sales"."amazon_orders" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."flipkart_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "shipment_id" "text" NOT NULL,
+    "order_item_id" "text",
+    "order_date" timestamp with time zone,
+    "status" "text",
+    "quantity" integer,
+    "sku" "text",
+    "total_price" numeric(10,2),
+    "net_revenue" numeric(10,2)
+);
+
+
+ALTER TABLE "sales"."flipkart_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."flipkart_orders" (
+    "shipment_id" "text" NOT NULL,
+    "order_id" "text" NOT NULL,
+    "payment_type" "text",
+    "customer_city" "text",
+    "customer_state" "text",
+    "customer_pincode" "text",
+    "last_accessed_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "sales"."flipkart_orders" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."last_updated" (
+    "channel" "text" NOT NULL,
+    "updated" timestamp with time zone NOT NULL
+);
+
+
+ALTER TABLE "sales"."last_updated" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."shiprocket_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "shiprocket_order_id" bigint NOT NULL,
+    "sku" "text",
+    "quantity" integer,
+    "net_revenue" numeric(10,2),
+    "net_discount" numeric(10,2)
+);
+
+
+ALTER TABLE "sales"."shiprocket_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."shiprocket_orders" (
+    "shiprocket_id" bigint NOT NULL,
+    "shopify_order_id" "text",
+    "order_date" timestamp with time zone,
+    "order_status" "text",
+    "shipped_date" timestamp with time zone,
+    "delivery_date" timestamp with time zone,
+    "customer_name" "text",
+    "customer_email" "text",
+    "customer_address" "text",
+    "customer_city" "text",
+    "customer_state" "text",
+    "customer_pincode" "text",
+    "payment_method" "text",
+    "discount_code" "text",
+    "utm_source" "text",
+    "utm_medium" "text",
+    "utm_campaign" "text",
+    "last_accessed_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "sales"."shiprocket_orders" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."vyapar_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "invoice_no" bigint NOT NULL,
+    "sku" "text",
+    "quantity" integer,
+    "net_revenue" numeric(12,2)
+);
+
+
+ALTER TABLE "sales"."vyapar_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "sales"."vyapar_sales" (
+    "invoice_no" bigint NOT NULL,
+    "sale_date" "date" NOT NULL,
+    "customer_name" "text",
+    "customer_phone" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "sales"."vyapar_sales" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "private"."api_keys"
+    ADD CONSTRAINT "api_keys_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "private"."api_keys"
+    ADD CONSTRAINT "api_keys_service_key" UNIQUE ("service");
+
+
+
+ALTER TABLE ONLY "sales"."amazon_items"
+    ADD CONSTRAINT "amazon_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "sales"."amazon_orders"
+    ADD CONSTRAINT "amazon_orders_pkey" PRIMARY KEY ("order_id");
+
+
+
+ALTER TABLE ONLY "sales"."flipkart_items"
+    ADD CONSTRAINT "flipkart_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "sales"."flipkart_orders"
+    ADD CONSTRAINT "flipkart_orders_pkey" PRIMARY KEY ("shipment_id");
+
+
+
+ALTER TABLE ONLY "sales"."last_updated"
+    ADD CONSTRAINT "last_updated_channel_key" UNIQUE ("channel");
+
+
+
+ALTER TABLE ONLY "sales"."last_updated"
+    ADD CONSTRAINT "last_updated_pkey" PRIMARY KEY ("channel");
+
+
+
+ALTER TABLE ONLY "sales"."shiprocket_items"
+    ADD CONSTRAINT "shiprocket_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "sales"."shiprocket_orders"
+    ADD CONSTRAINT "shiprocket_orders_pkey" PRIMARY KEY ("shiprocket_id");
+
+
+
+ALTER TABLE ONLY "sales"."vyapar_items"
+    ADD CONSTRAINT "unique_vyapar_item" UNIQUE ("invoice_no", "sku");
+
+
+
+ALTER TABLE ONLY "sales"."vyapar_items"
+    ADD CONSTRAINT "vyapar_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "sales"."vyapar_sales"
+    ADD CONSTRAINT "vyapar_sales_pkey" PRIMARY KEY ("invoice_no");
+
+
+
+CREATE INDEX "idx_flipkart_items_order_date" ON "sales"."flipkart_items" USING "btree" ("order_date");
+
+
+
+CREATE INDEX "idx_flipkart_items_sku" ON "sales"."flipkart_items" USING "btree" ("sku");
+
+
+
+CREATE INDEX "idx_flipkart_items_status" ON "sales"."flipkart_items" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_flipkart_orders_geo" ON "sales"."flipkart_orders" USING "btree" ("customer_state", "customer_city", "customer_pincode");
+
+
+
+CREATE INDEX "idx_flipkart_orders_order_id" ON "sales"."flipkart_orders" USING "btree" ("order_id");
+
+
+
+CREATE INDEX "idx_vyapar_items_invoice" ON "sales"."vyapar_items" USING "btree" ("invoice_no");
+
+
+
+CREATE UNIQUE INDEX "uniq_amazon_items_order_item" ON "sales"."amazon_items" USING "btree" ("order_id", "amazon_item_id");
+
+
+
+CREATE UNIQUE INDEX "uniq_flipkart_items_shipment_order_item" ON "sales"."flipkart_items" USING "btree" ("shipment_id", "order_item_id");
+
+
+
+CREATE UNIQUE INDEX "uniq_shiprocket_items_order_sku" ON "sales"."shiprocket_items" USING "btree" ("shiprocket_order_id", "sku");
+
+
+
+ALTER TABLE ONLY "sales"."amazon_items"
+    ADD CONSTRAINT "amazon_items_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "sales"."amazon_orders"("order_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "sales"."flipkart_items"
+    ADD CONSTRAINT "flipkart_items_shipment_id_fkey" FOREIGN KEY ("shipment_id") REFERENCES "sales"."flipkart_orders"("shipment_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "sales"."shiprocket_items"
+    ADD CONSTRAINT "shiprocket_items_shiprocket_order_id_fkey" FOREIGN KEY ("shiprocket_order_id") REFERENCES "sales"."shiprocket_orders"("shiprocket_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "sales"."vyapar_items"
+    ADD CONSTRAINT "vyapar_items_invoice_no_fkey" FOREIGN KEY ("invoice_no") REFERENCES "sales"."vyapar_sales"("invoice_no") ON DELETE CASCADE;
+
+
+
+CREATE POLICY "Allow all access for service role" ON "sales"."vyapar_items" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access for service role" ON "sales"."vyapar_sales" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."amazon_items" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."amazon_orders" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."flipkart_items" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."flipkart_orders" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."shiprocket_items" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Allow all access to service role" ON "sales"."shiprocket_orders" TO "service_role" USING (true);
+
+
+
+CREATE POLICY "Enable read access for all users" ON "sales"."last_updated" FOR SELECT TO "authenticated" USING (true);
+
+
+
+ALTER TABLE "sales"."amazon_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."amazon_orders" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."flipkart_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."flipkart_orders" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."last_updated" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."shiprocket_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."shiprocket_orders" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."vyapar_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "sales"."vyapar_sales" ENABLE ROW LEVEL SECURITY;
+
+
+
+
+ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
+
+
+
+
+
+
+
+
+GRANT USAGE ON SCHEMA "private" TO "service_role";
+
+
+
+GRANT USAGE ON SCHEMA "public" TO "postgres";
+GRANT USAGE ON SCHEMA "public" TO "anon";
+GRANT USAGE ON SCHEMA "public" TO "authenticated";
+GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+GRANT USAGE ON SCHEMA "sales" TO "anon";
+GRANT USAGE ON SCHEMA "sales" TO "authenticated";
+GRANT USAGE ON SCHEMA "sales" TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "anon";
+GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."rls_auto_enable"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "anon";
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "authenticated";
+GRANT ALL ON FUNCTION "sales"."dashboard_summary"("date_from" timestamp with time zone, "date_to" timestamp with time zone, "channels" "text"[]) TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GRANT SELECT,UPDATE ON TABLE "private"."api_keys" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."amazon_items" TO "anon";
+GRANT ALL ON TABLE "sales"."amazon_items" TO "authenticated";
+GRANT ALL ON TABLE "sales"."amazon_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."amazon_orders" TO "anon";
+GRANT ALL ON TABLE "sales"."amazon_orders" TO "authenticated";
+GRANT ALL ON TABLE "sales"."amazon_orders" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."flipkart_items" TO "anon";
+GRANT ALL ON TABLE "sales"."flipkart_items" TO "authenticated";
+GRANT ALL ON TABLE "sales"."flipkart_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."flipkart_orders" TO "anon";
+GRANT ALL ON TABLE "sales"."flipkart_orders" TO "authenticated";
+GRANT ALL ON TABLE "sales"."flipkart_orders" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."last_updated" TO "anon";
+GRANT ALL ON TABLE "sales"."last_updated" TO "authenticated";
+GRANT ALL ON TABLE "sales"."last_updated" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."shiprocket_items" TO "anon";
+GRANT ALL ON TABLE "sales"."shiprocket_items" TO "authenticated";
+GRANT ALL ON TABLE "sales"."shiprocket_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."shiprocket_orders" TO "anon";
+GRANT ALL ON TABLE "sales"."shiprocket_orders" TO "authenticated";
+GRANT ALL ON TABLE "sales"."shiprocket_orders" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."vyapar_items" TO "anon";
+GRANT ALL ON TABLE "sales"."vyapar_items" TO "authenticated";
+GRANT ALL ON TABLE "sales"."vyapar_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "sales"."vyapar_sales" TO "anon";
+GRANT ALL ON TABLE "sales"."vyapar_sales" TO "authenticated";
+GRANT ALL ON TABLE "sales"."vyapar_sales" TO "service_role";
+
+
+
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON SEQUENCES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON SEQUENCES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON SEQUENCES TO "service_role";
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON FUNCTIONS TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON FUNCTIONS TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON FUNCTIONS TO "service_role";
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "sales" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--
+-- Dumped schema changes for auth and storage
+--
+
