@@ -36,7 +36,9 @@ export default async function DashboardPage({ searchParams }: Props) {
     console.error('dashboard_summary RPC error:', error);
   }
 
-  const rows: SummaryRow[] = (data ?? []) as SummaryRow[];
+  const rows: SummaryRow[] = ((data ?? []) as SummaryRow[]).filter(
+    (r) => filters.skus.includes(r.sku),
+  );
 
   return (
     <Container size="xl" py="xl">
