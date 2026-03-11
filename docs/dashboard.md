@@ -4,21 +4,24 @@ This is the high-level description of the final dashboard deliverable, for now. 
 
 For the dashboard, our dimensions include product variant, sales channel, and time period (monthly by default). The metrics/facts we want to view are sales revenue and number of products sold. By default, we want to view the per-channel, per-product-variant sales totals (both revenue and quantity) for the last 30 days.
 
-We need a control panel attached to this dashboard to set filters such as (1) Date Range Picker, (2) Multi-Select for Channels, (3) Group By Selector: A dropdown that lets you choose the "Row Heading" (e.g., Group by "Product" or Group by "Channel"). If the user selects "Group by: Product," the table shows one SKU per row with its total revenue and units sold. If the user selects "Group by: Channel," the rows change to show channel names with their respective totals. By default, we should group by Product first to have 10 SKU rows and then group by Channel so we have 4 rows for each SKU, a total of 40 rows.
+We need a control panel attached to this dashboard to set filters such as (1) Date Range Picker, (2) Multi-Select for Channels, (3) Multi-Select for Products, (4) Group By Selector: A dropdown that lets you choose the "Row Heading" (e.g., Group by "Product" or Group by "Channel"). If the user selects "Group by: Product," the table shows one SKU per row with its total revenue and units sold. If the user selects "Group by: Channel," the rows change to show channel names with their respective totals. By default, we should group by Product first to have 10 SKU rows and then group by Channel so we have 4 rows for each SKU, a total of 40 rows.
 
 While creating this Dashboard, please respect best practices for React and Next.js (App Router). Use Mantine components for all the frontend elements.
 
 #### SKU to Product Mapping
-- `TR PF001`: Allure
-- `TR PF002`: Bliss
-- `TR PF003`: Celeste
-- `TR PF004`: Allure
-- `TR PF005`: Escape
-- `TR PF006`: Euphoria
-- `TR PF007`: Men's Gift Set
+
+Products are ordered canonically throughout the dashboard — in both the product filter list and the table rows — as follows: Women's fragrances (Allure, Bliss, Celeste, Euphoria), Women's Gift Set, then Men's fragrances (Elixir, Escape, Illusion, Legend), Men's Gift Set.
+
+- `TR PF001`: Allure (Women's)
+- `TR PF002`: Bliss (Women's)
+- `TR PF003`: Celeste (Women's)
+- `TR PF006`: Euphoria (Women's)
 - `TR PF008`: Women's Gift Set
-- `TR PF009`: Illusion
-- `TR PF010`: Legend
+- `TR PF004`: Elixir (Men's)
+- `TR PF005`: Escape (Men's)
+- `TR PF009`: Illusion (Men's)
+- `TR PF010`: Legend (Men's)
+- `TR PF007`: Men's Gift Set
 
 #### Technical Details
 Only the orders which meet the criteria below should be included in the dashboard:
@@ -124,6 +127,12 @@ Server components cannot import from `'use client'` modules. Since `page.tsx` (s
 
 The RPC always returns the most granular data: one row per `(channel, sku, month)`. `SalesTable` receives this raw data plus the `groupBy` and date range props, and handles all further aggregation and display logic in the browser.
 
+**Component structure:**
+- Built entirely with Mantine components (`Table`, `ScrollArea`, `UnstyledButton`, `Box`) — no raw HTML table elements.
+- All derived values — `periods`, aggregated rows, the flat row list, and grand totals — are memoised with `useMemo` to avoid recomputation on unrelated renders.
+- `buildFlatRows` (flat row list construction for the product-channel view) is a pure function extracted outside the component.
+- A `MonthlyCells` sub-component encapsulates the repeated revenue/qty cell pair pattern, shared by both the grouped and flat row rendering paths.
+
 **Three groupBy modes:**
 | Mode | Key | Rows shown |
 |------|-----|-----------|
@@ -142,3 +151,37 @@ Iterates the raw RPC rows once, building a `Map` keyed by the composite groupBy 
 
 **Revenue formatting:**
 Uses `Intl.NumberFormat` with `{ style: 'currency', currency: 'INR' }` to format all revenue figures as Indian Rupees (e.g. `₹1,23,456`), respecting the Indian lakh/crore grouping convention automatically.
+
+---
+
+### Filter bar UX
+
+All four filter controls — date range, channels, products, and group-by — are laid out on a single row with equal widths so the bar never wraps or shifts.
+
+The **Channels** and **Products** selects use a compact count-based display instead of showing each selected item as a pill. This keeps the controls a fixed width regardless of how many items are selected. The display reads `All (N)` when everything is selected, `K of N selected` for a subset, and `None selected` when the dropdown has been cleared. Clicking either control opens a dropdown with a checkbox next to each item.
+
+The **Products** filter is backed by the canonical product ordering described above, so the dropdown always lists products in the Women's → Men's.
+
+When **all channels or all products are selected**, the corresponding URL parameter is omitted entirely (treated as the default "no filter applied"), keeping URLs clean and shareable.
+
+---
+
+### Table design and UX
+
+#### Monthly sub-columns
+
+When the selected date range spans more than one calendar month, the table expands to show one pair of Revenue/Qty sub-columns per month, with month names centred above each pair in the top header row. Alternating month groups use slightly different header background shades to make it easy to visually scan across a row. A persistent Total column always appears on the right regardless of how many months are shown.
+
+Partial months at either boundary of the date range display the actual date span (e.g. `Mar 9 – Mar 31`) rather than just the month name.
+
+#### Product name merging (Product → Channel view)
+
+In the default Product → Channel grouping mode, all channel rows belonging to the same product share a single merged Product cell that spans the full channel group. The product name is vertically centred in that merged cell.
+
+#### Sticky label columns
+
+The Product and Channel label columns are pinned to the left edge of the visible area while scrolling horizontally, so the row identity is always visible regardless of how many month columns are on screen.
+
+#### Horizontal scroll controls
+
+Because the table can become wide when many months are selected, two tall narrow buttons flank the table — one on the left gutter, one on the right gutter. Clicking either button smoothly scrolls the table in the corresponding direction. This gives desktop users a click target for horizontal navigation without requiring them to interact with the browser's scrollbar.
