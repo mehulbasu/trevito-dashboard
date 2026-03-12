@@ -1,4 +1,4 @@
-import { Box, Button, Divider, Image, Stack, Text, Title } from '@mantine/core';
+import { Box, Button, Image, Stack, Text } from '@mantine/core';
 
 export default function Home() {
   return (
@@ -11,7 +11,7 @@ export default function Home() {
       }}
     >
       <Stack align="center" gap="xl" style={{ width: '100%', maxWidth: 380, padding: '2rem' }}>
-        <Image src="/Logo.svg" alt="Trévito" fit="contain" />
+        <Image src="/Trevito_logo.svg" alt="Trévito" fit="contain" />
         <Stack align="center" gap={6}>
           <Text
             c="dimmed"

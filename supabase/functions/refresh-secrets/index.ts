@@ -9,6 +9,7 @@
  */
 
 // TODO!: Schedule this function to run daily using cron
+// TODO!!: Investigate secure alternative to using CRON_SECRET for authentication
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from 'npm:@supabase/supabase-js@2'
 

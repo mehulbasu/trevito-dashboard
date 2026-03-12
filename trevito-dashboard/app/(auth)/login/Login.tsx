@@ -39,7 +39,7 @@ export function LoginComponent() {
       email,
       options: {
         shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/auth/confirm`,
+        emailRedirectTo: `${window.location.origin}/confirm`,
       },
     });
 
