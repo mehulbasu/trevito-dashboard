@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   }
 
   // If there's an error, redirect to login with an error message
-  // TODO: How will we handle showing this error message on the login page?
+  // TODO!!: How will we handle showing this error message on the login page? Happening on Safari
   return NextResponse.redirect(new URL('/login?error=Could not verify email', request.url));
 }
 
