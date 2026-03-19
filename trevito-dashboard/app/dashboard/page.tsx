@@ -63,7 +63,12 @@ export default async function DashboardPage({ searchParams }: Props) {
         </Group>
 
         <Suspense>
-          <FilterBar />
+          <FilterBar
+            data={rows}
+            groupBy={filters.groupBy}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+          />
         </Suspense>
 
         <SalesTable
