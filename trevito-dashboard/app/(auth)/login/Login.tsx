@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { TextInput, Button, Paper, Stack, Center, Text, Image } from '@mantine/core';
+import { TextInput, Button, Paper, Stack, Center, Text } from '@mantine/core';
 import { createClient } from '@/lib/supabase/client';
 
 const RETRY_DELAY = 60;
@@ -14,6 +14,16 @@ export function LoginComponent() {
   const [countdown, setCountdown] = useState(RETRY_DELAY);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const supabase = createClient();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get('error');
+    if (error) {
+      alert('Error: ' + error);
+      // Clear the error from URL
+      window.history.replaceState({}, '', '/login');
+    }
+  }, []);
 
   useEffect(() => {
     if (sent) {

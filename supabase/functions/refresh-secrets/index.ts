@@ -8,8 +8,7 @@
  * Note: Ensure that the `CRON_SECRET` environment variable is set to a secure, random value and that the same value is used in the request header to prevent unauthorized access.
  */
 
-// TODO!: Schedule this function to run daily using cron
-// TODO!!: Investigate secure alternative to using CRON_SECRET for authentication
+// TODO!: Store cron_secret in Supabase Vault
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -25,6 +24,8 @@ const FLIPKART_AUTH_URL = 'https://api.flipkart.net/oauth-service/oauth/token'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const TEN_DAYS_MS = 10 * ONE_DAY_MS
 const CRON_SECRET_HEADER = 'x-cron-secret'
+
+const getErrorMessage = (err: unknown) => err instanceof Error ? err.message : String(err)
 
 const fetchShiprocketToken = async (email: string, password: string) => {
   const response = await fetch(SHIPROCKET_AUTH_URL, {
@@ -88,6 +89,7 @@ const fetchFlipkartToken = async (appId: string, appSecret: string) => {
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') {
+      console.error('[refresh-secrets] Method not allowed', { method: req.method })
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
         status: 405,
         headers: { 'Content-Type': 'application/json' }
@@ -97,6 +99,10 @@ Deno.serve(async (req) => {
     const expectedCronSecret = Deno.env.get('CRON_SECRET')
     const providedCronSecret = req.headers.get(CRON_SECRET_HEADER)
     if (!expectedCronSecret || providedCronSecret !== expectedCronSecret) {
+      console.error('[refresh-secrets] Unauthorized request', {
+        hasConfiguredSecret: Boolean(expectedCronSecret),
+        hasProvidedSecret: Boolean(providedCronSecret)
+      })
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
@@ -139,6 +145,7 @@ Deno.serve(async (req) => {
     }) ?? []
 
     if (refreshTargets.length === 0) {
+      console.log('[refresh-secrets] Success: no secrets need refreshing')
       return new Response(JSON.stringify({ message: 'No secrets need refreshing' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -205,12 +212,20 @@ Deno.serve(async (req) => {
       updatedServices.push(row.service)
     }
 
+    console.log('[refresh-secrets] Success: refreshed services', {
+      refreshed: updatedServices,
+      count: updatedServices.length
+    })
+
     return new Response(JSON.stringify({ refreshed: updatedServices }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err?.message ?? err) }), {
+    const errorMessage = getErrorMessage(err)
+    console.error('[refresh-secrets] Error while refreshing secrets', err)
+
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     })

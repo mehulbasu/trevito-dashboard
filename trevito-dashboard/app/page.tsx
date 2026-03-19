@@ -11,8 +11,8 @@ export default function Home() {
       }}
     >
       <Stack align="center" gap="xl" style={{ width: '100%', maxWidth: 380, padding: '2rem' }}>
-        <Image src="/Trevito_logo.svg" alt="Trévito" fit="contain" />
         <Stack align="center" gap={6}>
+          <Image src="/Trevito_logo.svg" alt="Trévito" fit="contain" w={250} h="auto" />        
           <Text
             c="dimmed"
             size='lg'
