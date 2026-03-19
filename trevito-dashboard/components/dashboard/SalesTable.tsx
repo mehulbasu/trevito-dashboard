@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useMemo, useRef } from 'react';
-import { Box, ScrollArea, Table, Text, UnstyledButton } from '@mantine/core';
+import { Box, Button, Group, ScrollArea, Stack, Table, Text, UnstyledButton } from '@mantine/core';
+import { IconDownload, IconRefresh } from '@tabler/icons-react';
+import { useRouter } from 'next/navigation';
+import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import {
   CHANNEL_LABEL,
@@ -325,6 +328,62 @@ function MonthlyCells({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Export                                                            */
+/* ------------------------------------------------------------------ */
+
+function exportToExcel(
+  rows: AggRow[],
+  periods: Period[],
+  showMonthly: boolean,
+  groupBy: GroupBy,
+  dateFrom: string,
+  dateTo: string,
+  grandRevenue: number,
+  grandQty: number,
+  grandMonthly: Record<string, { revenue: number; qty: number }>,
+) {
+  const header: (string | number)[] =
+    groupBy === 'product-channel'
+      ? ['Product', 'Channel']
+      : groupBy === 'product'
+      ? ['Product']
+      : ['Channel'];
+
+  if (showMonthly) {
+    for (const p of periods) header.push(`${p.label} Revenue`, `${p.label} Qty`);
+  }
+  header.push('Total Revenue', 'Total Qty');
+
+  const dataRows = rows.map((row) => {
+    const cells: (string | number)[] =
+      groupBy === 'product-channel' ? [row.label, row.subLabel ?? ''] : [row.label];
+    if (showMonthly) {
+      for (const p of periods) {
+        const m = row.monthly[p.key];
+        cells.push(m ? m.revenue : 0, m ? m.qty : 0);
+      }
+    }
+    cells.push(row.totalRevenue, row.totalQty);
+    return cells;
+  });
+
+  const totalsRow: (string | number)[] =
+    groupBy === 'product-channel' ? ['Total', ''] : ['Total'];
+  if (showMonthly) {
+    for (const p of periods) {
+      const gm = grandMonthly[p.key];
+      totalsRow.push(gm ? gm.revenue : 0, gm ? gm.qty : 0);
+    }
+  }
+  totalsRow.push(grandRevenue, grandQty);
+
+  const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows, totalsRow]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sales');
+  XLSX.writeFile(wb, `trevito_sales_${dateFrom}_to_${dateTo}.xlsx`);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Scroll button base style                                           */
 /* ------------------------------------------------------------------ */
 
@@ -351,6 +410,7 @@ const scrollBtnBase: React.CSSProperties = {
 /* ------------------------------------------------------------------ */
 
 export default function SalesTable({ data, groupBy, dateFrom, dateTo }: Props) {
+  const router = useRouter();
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const periods = useMemo(() => buildPeriods(dateFrom, dateTo), [dateFrom, dateTo]);
@@ -396,7 +456,39 @@ export default function SalesTable({ data, groupBy, dateFrom, dateTo }: Props) {
     viewportRef.current?.scrollBy({ left: offset, behavior: 'smooth' });
 
   return (
-    <Box pos="relative">
+    <Stack gap="lg">
+      <Group justify="flex-end">
+        <Button
+          variant="default"
+          size="sm"
+          leftSection={<IconRefresh size={14} />}
+          onClick={() => router.replace('/dashboard')}
+        >
+          Reset filters
+        </Button>
+        <Button
+          variant="light"
+          size="sm"
+          color="green"
+          leftSection={<IconDownload size={14} />}
+          onClick={() =>
+            exportToExcel(
+              rows,
+              periods,
+              showMonthly,
+              groupBy,
+              dateFrom,
+              dateTo,
+              grandRevenue,
+              grandQty,
+              grandMonthly,
+            )
+          }
+        >
+          Export data
+        </Button>
+      </Group>
+      <Box pos="relative">
       <UnstyledButton
         onClick={() => scrollBy(-300)}
         aria-label="Scroll table left"
@@ -754,5 +846,6 @@ export default function SalesTable({ data, groupBy, dateFrom, dateTo }: Props) {
         </Table>
       </ScrollArea>
     </Box>
+    </Stack>
   );
 }
